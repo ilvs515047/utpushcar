@@ -17,13 +17,28 @@
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-warning { background: #f39c12; } .btn-warning:hover { background: #e67e22; }
         .btn-success { background: #2ecc71; color: #2c3e50; } .btn-success:hover { background: #27ae60; }
+        .btn-danger { background: #e74c3c; color: white; } .btn-danger:hover { background: #c0392b; }
         .btn-outline { background: transparent; border: 1px solid #bdc3c7; color: #ecf0f1; padding: 6px; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
         .btn-outline:hover { background: rgba(189, 195, 199, 0.2); }
         
         #workspace { flex: 1; background: #ecf0f1; border-radius: 8px; overflow: hidden; position: relative; box-shadow: inset 0 0 20px rgba(0,0,0,0.1);}
         #info { font-size: 13px; color: #bdc3c7; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; line-height: 1.4; }
         
-        #results_log { background: #1a252f; padding: 10px; border-radius: 6px; font-size: 12px; overflow-y: auto; max-height: 300px; display: none; flex-direction: column; gap: 5px; border: 1px solid #7f8c8d;}
+        /* 💡 修正 2: 讓報告視窗可以自由調整大小 (resize: vertical) */
+        #results_log { 
+            background: #1a252f; 
+            padding: 10px; 
+            border-radius: 6px; 
+            font-size: 12px; 
+            overflow-y: auto; 
+            height: 250px; 
+            min-height: 150px; 
+            resize: vertical; 
+            display: none; 
+            flex-direction: column; 
+            gap: 5px; 
+            border: 1px solid #7f8c8d;
+        }
         .log-item { display: flex; justify-content: space-between; border-bottom: 1px dashed #34495e; padding-bottom: 6px; padding-top: 4px;}
         .log-pass { color: #2ecc71; font-weight: bold;}
         .log-fail { color: #e74c3c; font-weight: bold;}
@@ -98,7 +113,7 @@
             <input type="number" id="val_force_coeff" value="0.0005" step="0.00005" min="0.00001" max="0.01" style="font-family:monospace;">
         </div>
         <div class="input-group">
-            <label>🎛️ 速度控制增益 kP <span style="font-size:11px;color:#7f8c8d;">(越小越平順，預設0.08)</span></label>
+            <label>🎛️ 速度控制增益 kP <span style="font-size:11px;color:#7f8c8d;">(預設0.08)</span></label>
             <input type="number" id="val_kP" value="0.08" step="0.01" min="0.01" max="1.0" style="font-family:monospace;">
         </div>
         <button id="btn_sim" disabled>▶️ 開始單次驗證</button>
@@ -116,7 +131,7 @@
         <button id="btn_auto_test" class="btn-success" disabled>🚀 開始自動掃描測試</button>
         
         <div id="results_log">
-            <div style="text-align: center; font-weight: bold; margin-bottom: 5px; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 5px;">📊 測試結果報告</div>
+            <div style="text-align: center; font-weight: bold; margin-bottom: 5px; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 5px;">📊 測試結果報告 (右下角可拖曳放大)</div>
         </div>
     </div>
 
@@ -157,7 +172,6 @@
     let failLineY = 0;
     let currentTotalMassVal = 0; 
 
-    // --- [新增] 參數儲存與載入功能 ---
     function saveParams() {
         const params = {
             val_w: document.getElementById('val_w').value,
@@ -202,9 +216,8 @@
             } catch (err) { alert("❌ 參數檔案讀取失敗，請確認是否為正確的 JSON 格式。"); }
         };
         reader.readAsText(file);
-        e.target.value = ''; // 重置 input 讓下次選同個檔案也能觸發
+        e.target.value = ''; 
     });
-    // -----------------------------
 
     blueprintUpload.addEventListener('change', function(e) {
         const file = e.target.files[0]; if (!file) return;
@@ -247,9 +260,35 @@
     window.addEventListener('mouseup', () => { isDraggingHandle = false; });
     workspace.addEventListener('mousemove', (e) => { if(simActive) updateMouseWorld(e); });
 
+    // 💡 修正 1: 自動測試的啟動與終止邏輯
     btnAutoTest.addEventListener('click', () => {
         if (!blueprint) return;
         
+        // 如果目前正在測試中，按下按鈕即「終止測試」
+        if (isAutoTesting) {
+            isAutoTesting = false;
+            testQueue = [];
+            
+            // 恢復按鈕外觀
+            btnAutoTest.className = "btn-success";
+            btnAutoTest.innerText = "🚀 開始自動掃描測試";
+            btnSim.disabled = false;
+            btnResetPos.style.display = 'block';
+            
+            // 立即停止物理引擎
+            simActive = false;
+            if (runner) Runner.stop(runner);
+            
+            // 寫入終止紀錄
+            const logItem = document.createElement('div');
+            logItem.className = 'log-item';
+            logItem.innerHTML = `<span style="color:#e74c3c; width:100%; text-align:center;">🛑 已手動終止批次測試</span>`;
+            resultsLog.appendChild(logItem);
+            resultsLog.scrollTop = resultsLog.scrollHeight;
+            return;
+        }
+
+        // --- 以下為開始測試的邏輯 ---
         const forcesStr = document.getElementById('auto_forces').value;
         const speedsStr = document.getElementById('auto_speeds').value;
         const forces = forcesStr.split(',').map(n => parseFloat(n.trim())).filter(n => !isNaN(n));
@@ -265,7 +304,10 @@
         });
 
         isAutoTesting = true;
-        btnAutoTest.disabled = true;
+        
+        // 變更按鈕外觀為「終止」
+        btnAutoTest.className = "btn-danger";
+        btnAutoTest.disabled = false; // 確保按鈕可點擊來停止
         btnSim.disabled = true;
         
         resultsLog.style.display = 'flex';
@@ -276,9 +318,11 @@
     });
 
     function runNextAutoTest() {
+        if (!isAutoTesting) return; // 💡 如果中途被停止了，就不要再跑下一輪
+
         if (testQueue.length === 0) {
             isAutoTesting = false;
-            btnAutoTest.disabled = false;
+            btnAutoTest.className = "btn-success";
             btnSim.disabled = false;
             btnAutoTest.innerText = "🚀 重新開始批次測試";
             alert("✅ 所有條件測試完畢！請查看日誌。");
@@ -286,7 +330,7 @@
         }
         
         currentTestConfig = testQueue.shift();
-        btnAutoTest.innerText = `⚙️ 測試中... 剩餘 ${testQueue.length} 組`;
+        btnAutoTest.innerText = `🛑 終止測試 (剩餘 ${testQueue.length} 組)`;
         initSimulation(); 
     }
 
@@ -308,7 +352,6 @@
         const airFrictionVal = parseFloat(document.getElementById('val_air_friction').value) || 0;
         const simDir = parseInt(document.getElementById('val_direction').value) || 1;
         
-        // [新增] 讀取 UI 設定的達標線距離，並換算為像素 (px)
         const finishDistCm = parseFloat(document.getElementById('val_finish_dist').value) || 37.5;
         const finishDistPx = finishDistCm * simScale;
         
@@ -328,7 +371,6 @@
         
         const startX = simDir === 1 ? gapStartX - 300 : gapStartX + gapPx + 300;
         
-        // [修改] 達標線座標套用自訂距離
         finishLineX = simDir === 1 ? gapStartX + gapPx + finishDistPx : gapStartX - finishDistPx; 
         failLineY = floorY + 60; 
 
@@ -359,9 +401,18 @@
             const computedDensity = p.mass / area;
 
             if (p.type === 'rect') {
+                const partFric = p.friction !== undefined ? p.friction : 0.1;
+
                 const rectBody = Bodies.rectangle(worldX, worldY, w_px, h_px, { 
-                    render: { fillStyle: p.color }, density: computedDensity, angle: angleRad, collisionFilter: p.isLoose ? {} : { group: carGroup },
-                    frictionAir: airFrictionVal 
+                    render: { fillStyle: p.color }, 
+                    density: computedDensity, 
+                    angle: angleRad, 
+                    collisionFilter: p.isLoose ? {} : { group: carGroup },
+                    frictionAir: airFrictionVal,
+                    friction: partFric,             
+                    frictionStatic: partFric * 50,  
+                    restitution: 0,                 
+                    slop: 0.05                      
                 });
                 rectBody.customData = p; 
                 if (p.isLoose) looseBodies.push(rectBody); else rigidParts.push(rectBody);
@@ -379,9 +430,7 @@
                     render: { fillStyle: p.color }
                 });
                 wheelBody.customData = p; 
-                // 軟輪硬輪都合進 compound body，徹底避免 Constraint 在大負重下陷地
                 rigidParts.push(wheelBody);
-                // wheelsList 只做記錄用（供日誌 fallback 或軸承阻力計算）
                 wheelsList.push(wheelBody);
             }
         });
@@ -391,14 +440,9 @@
         if(handleConfig) handlePointLocal = { x: handleConfig.x - trolleyBody.position.x, y: handleConfig.y - trolleyBody.position.y }; 
         else handlePointLocal = { x: 0, y: 0 };
 
-        // ✅ 正確的 kgf → Matter.js 力 換算係數
-        // Matter.js 內部質量單位 = kg，gravity.y = 1 (px/tick²)
-        // 1 kgf 對應 1kg 物體的重力大小 = trolleyBody.mass Matter單位
-        // 因為 density = kg/px²，所以 matter_mass ≈ real_mass_kg
         const kgfToMatter = parseFloat(document.getElementById('val_force_coeff').value) || 0.0005;
         const kP = parseFloat(document.getElementById('val_kP').value) || 0.08;
 
-        // 軟硬輪皆已合進 trolleyBody，不需要 Constraint
         Composite.add(engine.world, [g1, g2, trolleyBody, ...looseBodies]);
 
         Events.on(engine, 'beforeUpdate', () => {
@@ -406,7 +450,6 @@
             if (isNaN(trolleyBody.position.x)) { simActive = false; alert("⚠ 物理崩潰！"); return; }
             if (trolleyBody.speed > 80) Body.setSpeed(trolleyBody, 80);
 
-            // 軸承阻力：對台車本體施加速度衰減（模擬培林阻力）
             if (wheelsList.length > 0) {
                 const maxAxleFric = Math.max(...wheelsList.map(w => (w.customData && w.customData.axleFriction) || 0));
                 if (maxAxleFric > 0 && Math.abs(trolleyBody.velocity.x) > 0.01) {
@@ -424,7 +467,6 @@
             actualSpeedCmS = (trolleyBody.velocity.x * 60) / simScale * simDir;
 
             if (mode === 'auto') {
-                // PD 比例控制：力隨速度誤差平滑縮放，避免 bang-bang 造成抖動
                 const speedError = targetSpeedCmS - actualSpeedCmS;
                 let forceFraction = Math.max(0, Math.min(1, speedError * kP));
                 const appliedForce = maxForceKgf * forceFraction * kgfToMatter * simDir;
@@ -463,7 +505,6 @@
                     
                     let tireTypeStr = "未知";
                     let tireRadiusStr = "未知";
-                    // 直接從原始藍圖讀取，不依賴執行時的 wheelsList（硬輪不在 wheelsList 裡）
                     const wheelPart = blueprint.parts.find(p => p.type === 'wheel');
                     if (wheelPart) {
                         tireTypeStr = wheelPart.tireType === 'soft' ? '軟輪' : '硬輪';
@@ -474,7 +515,6 @@
                     logItem.className = 'log-item';
                     const dirStr = simDir === 1 ? "➡️ 左至右" : "⬅️ 右至左";
                     
-                    // [修改] 日誌中加入達標距離的顯示
                     logItem.innerHTML = `
                         <div style="display:flex; flex-direction:column; gap:3px;">
                             <span style="color:#bdc3c7;">[${dirStr}] 溝槽: <b>${gapCm}</b>cm | 達標: <b>${finishDistCm}</b>cm | 摩擦: <b>${floorFriction}</b> | 空阻: <b>${airFrictionVal}</b></span>
@@ -486,7 +526,7 @@
                     resultsLog.appendChild(logItem);
                     resultsLog.scrollTop = resultsLog.scrollHeight; 
                     
-                    setTimeout(runNextAutoTest, 500);
+                    if(isAutoTesting) setTimeout(runNextAutoTest, 500);
                 }
             }
         });
@@ -568,7 +608,6 @@
                 }
             }
             looseBodies.forEach(drawPartInfo);
-            // wheelsList 的輪子已包含在 trolleyBody.parts 內，不需要再畫一次
 
             ctx.beginPath(); ctx.arc(hWorld.x, hWorld.y, isDraggingHandle ? 10 : 8, 0, Math.PI*2); 
             ctx.fillStyle = isDraggingHandle || currentForceKgf > 0 ? '#e74c3c' : '#3498db'; 
