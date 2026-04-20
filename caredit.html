@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1. 可視化台車造車廠 (全公制+背景平移版)</title>
+    <style>
+        body { font-family: "Songti TC", serif; background: #f7f5f0; color: #4a443c; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
+        .toolbar { width: 250px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        .canvas-area { flex: 1; background: #fff; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); position: relative; overflow: hidden; border: 1px solid #ccc; display: flex; flex-direction: column; }
+        .props-panel { width: 280px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
+        h2, h3 { margin-top: 0; border-bottom: 2px dashed #e6e2d8; padding-bottom: 10px; font-size: 18px; }
+        button { padding: 12px; background: #7b8b6f; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #6a7a5f; }
+        .btn-outline { background: transparent; border: 2px solid #7b8b6f; color: #7b8b6f; }
+        .btn-outline:hover { background: #f0f5ee; }
+        .btn-danger { background: #e74c3c; } .btn-danger:hover { background: #c0392b; }
+        .input-group { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 14px; }
+        input[type="number"], input[type="text"], select { padding: 6px; width: 100px; border: 1px solid #ccc; border-radius: 4px; }
+        .file-input-wrapper input[type="file"] { width: 100%; box-sizing: border-box; font-size: 12px; }
+        canvas { flex: 1; cursor: crosshair; background: #fafafa; }
+        #top_bar { padding: 10px 20px; background: #eee; border-bottom: 1px solid #ccc; font-size: 14px; font-weight: bold; }
+        .hint-text { font-size: 12px; color: #7f8c8d; margin-top: -5px; }
+    </style>
+</head>
+<body>
+
+    <div class="toolbar">
+        <h2>🛠️ 零件庫</h2>
+        <div style="font-size: 12px; color: #e74c3c; margin-top: -10px; margin-bottom: 10px;">所有單位皆為公分 (cm)</div>
+        <button class="btn-outline" onclick="addPart('rect', '骨架/配重', 50, 5, 10, '#b5b0a1')">➕ 新增 方形骨架</button>
+        <button class="btn-outline" onclick="addPart('rect', '載重物', 30, 30, 100, '#d4a373')">➕ 新增 載重物</button>
+        <button class="btn-outline" onclick="addPart('wheel', '輪胎', 6, 6, 2, '#333')">➕ 新增 輪胎</button>
+        <button class="btn-outline" onclick="addPart('handle', '把手推力點', 4, 4, 0, '#3498db')">➕ 新增 把手推力點</button>
+        <div style="flex: 1;"></div>
+        
+        <div style="border-top: 2px dashed #e6e2d8; padding-top: 15px; display: flex; flex-direction: column; gap: 15px;">
+            <div class="input-group file-input-wrapper" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                <label>🖼️ 匯入草圖當背景 (描圖用)</label>
+                <input type="file" id="bgUpload" accept="image/*">
+            </div>
+            
+            <div class="input-group" id="bg_scale_group" style="display: none; flex-direction: column; align-items: flex-start; gap: 5px; width: 100%;">
+                <label style="font-size: 12px;">🔍 底圖縮放: <span id="bg_scale_val">100%</span></label>
+                <input type="range" id="bg_scale" min="0.1" max="5" step="0.1" value="1" style="width: 100%; cursor: ew-resize;" oninput="updateBgScale()">
+                <div class="hint-text">💡 提示：滑鼠停在畫布上時，可用鍵盤方向鍵 (↑↓←→) 移動背景圖。</div>
+            </div>
+            
+            <div class="input-group file-input-wrapper" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+                <label>📂 開啟舊檔編輯 (.json)</label>
+                <input type="file" id="blueprintUpload" accept=".json">
+            </div>
+            <button onclick="exportJSON()">💾 匯出台車藍圖 (.json)</button>
+        </div>
+    </div>
+
+    <div class="canvas-area">
+        <div id="top_bar">畫布 (中心點為原點) | 滑鼠拖曳擺放零件</div>
+        <canvas id="canvas" tabindex="0"></canvas>
+    </div>
+
+    <div class="props-panel" id="props_panel">
+        <h3>📐 屬性設定 (點選零件)</h3>
+        <div id="no_select">請在畫布上點選一個零件。</div>
+        <div id="has_select" style="display: none; flex-direction: column; gap: 10px;">
+            <div class="input-group"><label>名稱</label><input type="text" id="p_name" onchange="updatePart()"></div>
+            <div class="input-group"><label>X 座標 (cm)</label><input type="number" id="p_x" onchange="updatePart()"></div>
+            <div class="input-group"><label>Y 座標 (cm)</label><input type="number" id="p_y" onchange="updatePart()"></div>
+            <div class="input-group" id="group_w"><label>寬度 (cm)</label><input type="number" id="p_w" onchange="updatePart()"></div>
+            <div class="input-group" id="group_h"><label>高度 (cm)</label><input type="number" id="p_h" onchange="updatePart()"></div>
+            
+            <div class="input-group" id="group_angle"><label>旋轉角度 (°)</label><input type="number" id="p_angle" value="0" onchange="updatePart()"></div>
+            <div class="input-group" id="group_loose" style="display:none; flex-direction: column; align-items: flex-start; gap: 5px;">
+                <label style="width:100%; border-top:1px solid #eee; padding-top:5px; margin-top:5px;">結構屬性</label>
+                <select id="p_loose" style="width: 100%;" onchange="updatePart()">
+                    <option value="false">🔒 固定於車架 (組成剛體)</option>
+                    <option value="true">📦 獨立不受綁定 (受重力影響)</option>
+                </select>
+            </div>
+
+            <div class="input-group" id="group_r" style="display:none;"><label>半徑 (cm)</label><input type="number" id="p_r" onchange="updatePart()"></div>
+            <div class="input-group"><label>重量 (kg)</label><input type="number" id="p_m" onchange="updatePart()"></div>
+            <div class="input-group" id="group_tire" style="display:none;">
+                <label>材質</label>
+                <select id="p_tire" onchange="updatePart()">
+                    <option value="hard">PU 硬輪</option>
+                    <option value="soft">橡膠軟輪</option>
+                </select>
+            </div>
+            
+            <div class="input-group" id="group_axle" style="display:none; flex-direction: column; align-items: flex-start; gap: 5px;">
+                <label style="width:100%; border-top:1px solid #eee; padding-top:5px; margin-top:5px;">輪軸阻力 (0無阻力 ~ 1卡死)</label>
+                <input type="number" id="p_axle" step="0.01" min="0" max="1" value="0.05" onchange="updatePart()" style="width: 100%;">
+            </div>
+
+            <button class="btn-danger" onclick="deletePart()">🗑️ 刪除此零件</button>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let width, height, centerX, centerY;
+    
+    const SIM_SCALE = 4; // 畫布顯示比例：1cm = 4px
+    
+    let parts = [];
+    let selectedId = null;
+    let isDragging = false;
+    let dragOffset = { x: 0, y: 0 };
+    let nextId = 1;
+    
+    let bgImage = null; 
+    let bgScale = 1.0;  
+    let bgOffset = { x: 0, y: 0 }; // 新增：背景偏移量
+
+    function resize() {
+        width = canvas.parentElement.clientWidth;
+        height = canvas.parentElement.clientHeight - 40;
+        canvas.width = width; canvas.height = height;
+        centerX = width / 2; centerY = height / 2;
+        draw();
+    }
+    window.addEventListener('resize', resize);
+
+    document.getElementById('bgUpload').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const img = new Image();
+            img.onload = function() {
+                bgImage = img;
+                document.getElementById('bg_scale_group').style.display = 'flex';
+                bgScale = 1.0;
+                bgOffset = { x: 0, y: 0 }; // 載入新圖時重置偏移
+                document.getElementById('bg_scale').value = 1.0;
+                document.getElementById('bg_scale_val').innerText = '100%';
+                draw();
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(file);
+    });
+
+    function updateBgScale() {
+        bgScale = parseFloat(document.getElementById('bg_scale').value);
+        document.getElementById('bg_scale_val').innerText = Math.round(bgScale * 100) + '%';
+        draw(); 
+    }
+
+    // 新增：鍵盤事件監聽 (用於移動背景)
+    canvas.addEventListener('mouseenter', () => canvas.focus()); // 滑鼠進入時自動聚焦
+    canvas.addEventListener('keydown', function(e) {
+        if (!bgImage) return; // 只有在有背景圖時才生效
+        
+        const moveSpeed = 5; // 每次移動的像素
+        let moved = false;
+
+        if (e.key === 'ArrowUp' || e.key === 'w') { bgOffset.y -= moveSpeed; moved = true; }
+        if (e.key === 'ArrowDown' || e.key === 's') { bgOffset.y += moveSpeed; moved = true; }
+        if (e.key === 'ArrowLeft' || e.key === 'a') { bgOffset.x -= moveSpeed; moved = true; }
+        if (e.key === 'ArrowRight' || e.key === 'd') { bgOffset.x += moveSpeed; moved = true; }
+
+        if (moved) {
+            e.preventDefault(); // 防止網頁捲動
+            draw();
+        }
+    });
+
+    document.getElementById('blueprintUpload').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const importedData = JSON.parse(event.target.result);
+                if (importedData.version === "3.0" && Array.isArray(importedData.parts)) {
+                    parts = importedData.parts;
+                    let maxId = 0;
+                    parts.forEach(p => { if (p.id > maxId) maxId = p.id; });
+                    nextId = maxId + 1;
+                    selectPart(null); 
+                    draw();
+                    alert("✅ 藍圖載入成功，可以開始編輯了！");
+                } else {
+                    alert("❌ 檔案格式不符，請使用 V3.0 的台車藍圖。");
+                }
+            } catch (err) {
+                alert("❌ JSON 檔案解析失敗。");
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; 
+    });
+
+    function addPart(type, name, w, h, mass, color) {
+        const p = { id: nextId++, type, name, x: 0, y: 0, w, h, r: w, mass, color, tireType: 'hard', angle: 0, isLoose: false, axleFriction: 0.05 };
+        parts.push(p);
+        selectPart(p.id);
+        draw();
+    }
+
+    canvas.addEventListener('mousedown', e => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left - centerX) / SIM_SCALE;
+        const my = (e.clientY - rect.top - centerY) / SIM_SCALE;
+        
+        let clicked = null;
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const p = parts[i];
+            if (p.type === 'rect' || p.type === 'handle') {
+                let dx = mx - p.x;
+                let dy = my - p.y;
+                let a = -(p.angle || 0) * Math.PI / 180;
+                let localX = dx * Math.cos(a) - dy * Math.sin(a);
+                let localY = dx * Math.sin(a) + dy * Math.cos(a);
+                
+                if (localX >= -p.w/2 && localX <= p.w/2 && localY >= -p.h/2 && localY <= p.h/2) { clicked = p; break; }
+            } else if (p.type === 'wheel') {
+                if (Math.hypot(mx - p.x, my - p.y) <= p.r) { clicked = p; break; }
+            }
+        }
+
+        if (clicked) {
+            selectPart(clicked.id);
+            isDragging = true;
+            dragOffset = { x: mx - clicked.x, y: my - clicked.y };
+        } else { selectPart(null); }
+    });
+
+    canvas.addEventListener('mousemove', e => {
+        if (!isDragging || !selectedId) return;
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left - centerX) / SIM_SCALE;
+        const my = (e.clientY - rect.top - centerY) / SIM_SCALE;
+        const p = parts.find(p => p.id === selectedId);
+        
+        p.x = Math.round((mx - dragOffset.x) * 10) / 10; 
+        p.y = Math.round((my - dragOffset.y) * 10) / 10;
+        updatePropsPanel(); draw();
+    });
+
+    window.addEventListener('mouseup', () => isDragging = false);
+
+    function selectPart(id) {
+        selectedId = id;
+        const p = parts.find(p => p.id === id);
+        document.getElementById('no_select').style.display = p ? 'none' : 'block';
+        document.getElementById('has_select').style.display = p ? 'flex' : 'none';
+        if (p) updatePropsPanel();
+        draw();
+    }
+
+    function updatePropsPanel() {
+        const p = parts.find(p => p.id === selectedId);
+        if (!p) return;
+        document.getElementById('p_name').value = p.name;
+        document.getElementById('p_x').value = p.x;
+        document.getElementById('p_y').value = p.y;
+        document.getElementById('p_m').value = p.mass;
+        
+        document.getElementById('group_w').style.display = p.type === 'rect' ? 'flex' : 'none';
+        document.getElementById('group_h').style.display = p.type === 'rect' ? 'flex' : 'none';
+        document.getElementById('group_r').style.display = p.type === 'wheel' ? 'flex' : 'none';
+        document.getElementById('group_tire').style.display = p.type === 'wheel' ? 'flex' : 'none';
+        
+        document.getElementById('group_angle').style.display = (p.type === 'rect' || p.type === 'handle') ? 'flex' : 'none';
+        document.getElementById('group_loose').style.display = p.type === 'rect' ? 'flex' : 'none';
+        
+        document.getElementById('group_axle').style.display = p.type === 'wheel' ? 'flex' : 'none';
+        
+        if (p.type === 'rect') { 
+            document.getElementById('p_w').value = p.w; 
+            document.getElementById('p_h').value = p.h; 
+            document.getElementById('p_loose').value = p.isLoose ? "true" : "false";
+        }
+        if (p.type === 'rect' || p.type === 'handle') {
+            document.getElementById('p_angle').value = p.angle || 0;
+        }
+        if (p.type === 'wheel') { 
+            document.getElementById('p_r').value = p.r; 
+            document.getElementById('p_tire').value = p.tireType; 
+            p.axleFriction = parseFloat(document.getElementById('p_axle').value) || 0;
+        }
+    }
+
+    function updatePart() {
+        const p = parts.find(p => p.id === selectedId);
+        if (!p) return;
+        p.name = document.getElementById('p_name').value;
+        p.x = parseFloat(document.getElementById('p_x').value) || 0;
+        p.y = parseFloat(document.getElementById('p_y').value) || 0;
+        p.mass = parseFloat(document.getElementById('p_m').value) || 0;
+        
+        if (p.type === 'rect' || p.type === 'handle') {
+            p.angle = parseFloat(document.getElementById('p_angle').value) || 0;
+        }
+        if (p.type === 'rect') { 
+            p.w = parseFloat(document.getElementById('p_w').value)||1; 
+            p.h = parseFloat(document.getElementById('p_h').value)||1; 
+            p.isLoose = document.getElementById('p_loose').value === "true";
+        }
+        if (p.type === 'wheel') { 
+            p.r = parseFloat(document.getElementById('p_r').value)||1; 
+            p.tireType = document.getElementById('p_tire').value; 
+            p.axleFriction = parseFloat(document.getElementById('p_axle').value) || 0;
+        }
+        draw();
+    }
+
+    function deletePart() { parts = parts.filter(p => p.id !== selectedId); selectPart(null); }
+
+    function draw() {
+        ctx.clearRect(0, 0, width, height);
+        
+        if (bgImage) {
+            ctx.save();
+            ctx.globalAlpha = 0.4;
+            const imgW = bgImage.width * bgScale;
+            const imgH = bgImage.height * bgScale;
+            // 套用 bgOffset 偏移量
+            ctx.drawImage(bgImage, centerX - imgW / 2 + bgOffset.x, centerY - imgH / 2 + bgOffset.y, imgW, imgH);
+            ctx.restore();
+        }
+
+        ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, centerY); ctx.lineTo(width, centerY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(centerX, 0); ctx.lineTo(centerX, height); ctx.stroke();
+
+        parts.forEach(p => {
+            const px = centerX + p.x * SIM_SCALE; 
+            const py = centerY + p.y * SIM_SCALE;
+            
+            ctx.save();
+            ctx.translate(px, py);
+            if (p.angle) ctx.rotate(p.angle * Math.PI / 180);
+
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = selectedId === p.id ? 1.0 : 0.85;
+            
+            if (p.type === 'rect' || p.type === 'handle') {
+                const drawW = p.w * SIM_SCALE; const drawH = p.h * SIM_SCALE;
+                ctx.fillRect(-drawW/2, -drawH/2, drawW, drawH);
+                
+                if (p.isLoose) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeRect(-drawW/2 + 3, -drawH/2 + 3, drawW - 6, drawH - 6);
+                    ctx.setLineDash([]);
+                }
+                
+                if (selectedId === p.id) { 
+                    ctx.strokeStyle = 'red'; ctx.lineWidth = 2; 
+                    ctx.strokeRect(-drawW/2, -drawH/2, drawW, drawH); 
+                }
+            } else if (p.type === 'wheel') {
+                const drawR = p.r * SIM_SCALE;
+                ctx.beginPath(); ctx.arc(0, 0, drawR, 0, Math.PI*2); ctx.fill();
+                if (selectedId === p.id) { ctx.strokeStyle = 'red'; ctx.lineWidth = 2; ctx.stroke(); }
+            }
+
+            ctx.restore(); 
+
+            ctx.fillStyle = '#000'; ctx.font = 'bold 12px "Songti TC"'; ctx.textAlign = 'center';
+            const labelOffset = p.type === 'rect' ? (p.h * SIM_SCALE)/2 : (p.r * SIM_SCALE);
+            ctx.fillText(p.name + (p.isLoose ? ' 📦' : ''), px, py - labelOffset - 5);
+        });
+    }
+
+    function exportJSON() {
+        if(parts.filter(p=>p.type==='handle').length !== 1) return alert("請確保場景中【有且只有一個】把手推力點！");
+        if(parts.filter(p=>p.type==='wheel').length < 1) return alert("請至少放入一個輪胎！");
+        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ version: "3.0", unit: "cm", type: "TrolleySolidBlueprint", parts: parts }, null, 2));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", "trolley_cm_blueprint.json");
+        dlAnchorElem.click();
+    }
+
+    setTimeout(() => {
+        resize();
+        addPart('rect', '底盤骨架', 50, 5, 10, '#b5b0a1'); parts[0].y = 12;
+        addPart('rect', '前柱', 5, 40, 5, '#b5b0a1'); parts[1].x = 22.5; parts[1].y = -10;
+        
+        addPart('rect', '主載重物', 20, 20, 150, '#d4a373'); parts[2].x = 0; parts[2].y = -5; parts[2].isLoose = true;
+        
+        addPart('wheel', '後輪 (硬)', 6, 6, 2, '#333'); parts[3].x = -18; parts[3].y = 20; parts[3].tireType = 'hard';
+        addPart('wheel', '前輪 (硬)', 6, 6, 2, '#333'); parts[4].x = 18; parts[4].y = 20; parts[4].tireType = 'hard';
+        addPart('handle', '把手點', 4, 4, 0, '#3498db'); parts[5].x = -22.5; parts[5].y = -25;
+        selectPart(null);
+    }, 100);
+</script>
+</body>
+</html>
