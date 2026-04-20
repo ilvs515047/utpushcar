@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
+        .sidebar { width: 340px; background: #34495e; padding: 25px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; box-shadow: 2px 0 10px rgba(0,0,0,0.3); z-index: 10; overflow-y: auto; max-height: 100%;}
+        h2 { border-bottom: 2px dashed #7f8c8d; padding-bottom: 10px; margin-top: 0; color: #f1c40f; font-size: 18px;}
+        .section-title { font-size: 14px; font-weight: bold; color: #bdc3c7; border-left: 4px solid #3498db; padding-left: 8px; margin-top: 10px; }
+        .input-group { display: flex; flex-direction: column; gap: 4px; font-size: 13px;}
+        input, select { padding: 6px; border: none; border-radius: 4px; background: #ecf0f1; color: #2c3e50; font-family: inherit; font-size: 13px;}
+        button { padding: 10px; background: #e74c3c; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; font-size: 14px; transition: 0.2s;}
+        button:hover { background: #c0392b; filter: brightness(1.1); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-warning { background: #f39c12; } .btn-warning:hover { background: #e67e22; }
+        .btn-success { background: #2ecc71; color: #2c3e50; } .btn-success:hover { background: #27ae60; }
+        .btn-outline { background: transparent; border: 1px solid #bdc3c7; color: #ecf0f1; padding: 6px; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-outline:hover { background: rgba(189, 195, 199, 0.2); }
+        
+        #workspace { flex: 1; background: #ecf0f1; border-radius: 8px; overflow: hidden; position: relative; box-shadow: inset 0 0 20px rgba(0,0,0,0.1);}
+        #info { font-size: 13px; color: #bdc3c7; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; line-height: 1.4; }
+        
+        #results_log { background: #1a252f; padding: 10px; border-radius: 6px; font-size: 12px; overflow-y: auto; max-height: 300px; display: none; flex-direction: column; gap: 5px; border: 1px solid #7f8c8d;}
+        .log-item { display: flex; justify-content: space-between; border-bottom: 1px dashed #34495e; padding-bottom: 6px; padding-top: 4px;}
+        .log-pass { color: #2ecc71; font-weight: bold;}
+        .log-fail { color: #e74c3c; font-weight: bold;}
+        .log-stuck { color: #f1c40f; font-weight: bold;}
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>🧪 動態幾何物理測試場</h2>
+        
+        <div class="input-group">
+            <label>📂 1. 載入實體藍圖 (.json)</label>
+            <input type="file" id="blueprintUpload" accept=".json">
+        </div>
+        <div id="info">尚未載入藍圖...</div>
+
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button class="btn-outline" onclick="document.getElementById('paramUpload').click()" style="flex:1;">📂 載入測試參數</button>
+            <button class="btn-outline" onclick="saveParams()" style="flex:1;">💾 儲存測試參數</button>
+            <input type="file" id="paramUpload" accept=".json" style="display:none;">
+        </div>
+        
+        <div class="section-title">⚙️ 環境與判定設定</div>
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>📐 溝槽寬度 (cm)</label>
+                <input type="number" id="val_w" value="5">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>滑動動摩擦係數</label>
+                <input type="number" id="val_floor_friction" value="0.3" step="0.1" min="0" max="2">
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>💨 空氣阻力係數</label>
+                <input type="number" id="val_air_friction" value="0" step="0.001" min="0" max="0.1">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>🏁 達標線距離 (cm)</label>
+                <input type="number" id="val_finish_dist" value="37.5" step="1" min="0">
+            </div>
+        </div>
+
+        <div class="section-title">🕹️ 單次互動測試</div>
+        <div class="input-group">
+            <label>🔄 測試推行方向</label>
+            <select id="val_direction">
+                <option value="1">➡️ 從左至右推行</option>
+                <option value="-1">⬅️ 從右至左推行</option>
+            </select>
+        </div>
+        <div class="input-group">
+            <select id="val_mode">
+                <option value="auto">⚙️ 自動定速推行</option>
+                <option value="manual">✋ 手動拉拽把手</option>
+            </select>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>推力(kgf)</label>
+                <input type="number" id="val_f" value="15">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>速度(cm/s)</label>
+                <input type="number" id="val_speed" value="30">
+            </div>
+        </div>
+        <div class="input-group">
+            <label>⚙️ 力換算係數 (kgf→Matter)</label>
+            <input type="number" id="val_force_coeff" value="0.0005" step="0.00005" min="0.00001" max="0.01" style="font-family:monospace;">
+        </div>
+        <div class="input-group">
+            <label>🎛️ 速度控制增益 kP <span style="font-size:11px;color:#7f8c8d;">(越小越平順，預設0.08)</span></label>
+            <input type="number" id="val_kP" value="0.08" step="0.01" min="0.01" max="1.0" style="font-family:monospace;">
+        </div>
+        <button id="btn_sim" disabled>▶️ 開始單次驗證</button>
+        <button id="btn_reset_pos" class="btn-warning" style="display:none;">🔄 重置台車位置</button>
+
+        <div class="section-title">🤖 批次條件探索 (交叉測試)</div>
+        <div class="input-group">
+            <label>測試推力陣列 (逗號分隔)</label>
+            <input type="text" id="auto_forces" value="5, 10, 15, 20">
+        </div>
+        <div class="input-group">
+            <label>測試速度陣列 (逗號分隔)</label>
+            <input type="text" id="auto_speeds" value="10, 20, 30, 40">
+        </div>
+        <button id="btn_auto_test" class="btn-success" disabled>🚀 開始自動掃描測試</button>
+        
+        <div id="results_log">
+            <div style="text-align: center; font-weight: bold; margin-bottom: 5px; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 5px;">📊 測試結果報告</div>
+        </div>
+    </div>
+
+    <div id="workspace"></div>
+
+<script>
+    const blueprintUpload = document.getElementById('blueprintUpload');
+    const paramUpload = document.getElementById('paramUpload');
+    const btnSim = document.getElementById('btn_sim');
+    const btnResetPos = document.getElementById('btn_reset_pos');
+    const btnAutoTest = document.getElementById('btn_auto_test');
+    const infoBox = document.getElementById('info');
+    const workspace = document.getElementById('workspace');
+    const resultsLog = document.getElementById('results_log');
+
+    let blueprint = null;
+    const simScale = 4; 
+
+    const Engine = Matter.Engine, Render = Matter.Render, Runner = Matter.Runner,
+          Bodies = Matter.Bodies, Body = Matter.Body, Composite = Matter.Composite,
+          Constraint = Matter.Constraint, Events = Matter.Events;
+
+    let engine, render, runner, trolleyBody, handlePointLocal;
+    let looseBodies = []; 
+    let wheelsList = []; 
+    let simActive = false;
+
+    let mouseWorld = { x: 0, y: 0 };
+    let isDraggingHandle = false;
+    let currentForceKgf = 0;
+    let actualSpeedCmS = 0;
+
+    let isAutoTesting = false;
+    let testQueue = [];
+    let currentTestConfig = null;
+    let autoTestTick = 0;
+    let finishLineX = 0;
+    let failLineY = 0;
+    let currentTotalMassVal = 0; 
+
+    // --- [新增] 參數儲存與載入功能 ---
+    function saveParams() {
+        const params = {
+            val_w: document.getElementById('val_w').value,
+            val_floor_friction: document.getElementById('val_floor_friction').value,
+            val_air_friction: document.getElementById('val_air_friction').value,
+            val_finish_dist: document.getElementById('val_finish_dist').value,
+            val_direction: document.getElementById('val_direction').value,
+            val_mode: document.getElementById('val_mode').value,
+            val_f: document.getElementById('val_f').value,
+            val_speed: document.getElementById('val_speed').value,
+            val_force_coeff: document.getElementById('val_force_coeff').value,
+            val_kP: document.getElementById('val_kP').value,
+            auto_forces: document.getElementById('auto_forces').value,
+            auto_speeds: document.getElementById('auto_speeds').value
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(params, null, 2));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", "trolley_test_params.json");
+        dlAnchorElem.click();
+    }
+
+    paramUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const params = JSON.parse(event.target.result);
+                if(params.val_w !== undefined) document.getElementById('val_w').value = params.val_w;
+                if(params.val_floor_friction !== undefined) document.getElementById('val_floor_friction').value = params.val_floor_friction;
+                if(params.val_air_friction !== undefined) document.getElementById('val_air_friction').value = params.val_air_friction;
+                if(params.val_finish_dist !== undefined) document.getElementById('val_finish_dist').value = params.val_finish_dist;
+                if(params.val_direction !== undefined) document.getElementById('val_direction').value = params.val_direction;
+                if(params.val_mode !== undefined) document.getElementById('val_mode').value = params.val_mode;
+                if(params.val_f !== undefined) document.getElementById('val_f').value = params.val_f;
+                if(params.val_speed !== undefined) document.getElementById('val_speed').value = params.val_speed;
+                if(params.val_force_coeff !== undefined) document.getElementById('val_force_coeff').value = params.val_force_coeff;
+                if(params.val_kP !== undefined) document.getElementById('val_kP').value = params.val_kP;
+                if(params.auto_forces !== undefined) document.getElementById('auto_forces').value = params.auto_forces;
+                if(params.auto_speeds !== undefined) document.getElementById('auto_speeds').value = params.auto_speeds;
+                alert("✅ 參數載入成功！");
+            } catch (err) { alert("❌ 參數檔案讀取失敗，請確認是否為正確的 JSON 格式。"); }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; // 重置 input 讓下次選同個檔案也能觸發
+    });
+    // -----------------------------
+
+    blueprintUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                blueprint = JSON.parse(event.target.result);
+                if(blueprint.version === "3.0") {
+                    currentTotalMassVal = blueprint.parts.reduce((sum, p) => sum + p.mass, 0);
+                    infoBox.innerHTML = `✅ 藍圖載入成功！<br>零件數: ${blueprint.parts.length} | 總重: ${currentTotalMassVal.toFixed(1)} kg`;
+                    btnSim.disabled = false;
+                    btnAutoTest.disabled = false;
+                } else { infoBox.innerHTML = `❌ 版本不符，請使用最新的造車廠匯出`; }
+            } catch (err) { infoBox.innerHTML = `❌ 檔案讀取失敗`; }
+        };
+        reader.readAsText(file);
+    });
+
+    function updateMouseWorld(e) {
+        if (!render || !render.bounds) return;
+        const rect = render.canvas.getBoundingClientRect();
+        const scaleX = (render.bounds.max.x - render.bounds.min.x) / rect.width;
+        const scaleY = (render.bounds.max.y - render.bounds.min.y) / rect.height;
+        mouseWorld.x = render.bounds.min.x + (e.clientX - rect.left) * scaleX;
+        mouseWorld.y = render.bounds.min.y + (e.clientY - rect.top) * scaleY;
+    }
+
+    workspace.addEventListener('mousedown', (e) => {
+        if(!simActive || isAutoTesting) return; 
+        updateMouseWorld(e);
+        const mode = document.getElementById('val_mode').value;
+        if (mode === 'manual' && trolleyBody && handlePointLocal) {
+            const cosA = Math.cos(trolleyBody.angle);
+            const sinA = Math.sin(trolleyBody.angle);
+            const hx = trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA);
+            const hy = trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA);
+            if (Math.hypot(mouseWorld.x - hx, mouseWorld.y - hy) < 50) isDraggingHandle = true; 
+        }
+    });
+    window.addEventListener('mouseup', () => { isDraggingHandle = false; });
+    workspace.addEventListener('mousemove', (e) => { if(simActive) updateMouseWorld(e); });
+
+    btnAutoTest.addEventListener('click', () => {
+        if (!blueprint) return;
+        
+        const forcesStr = document.getElementById('auto_forces').value;
+        const speedsStr = document.getElementById('auto_speeds').value;
+        const forces = forcesStr.split(',').map(n => parseFloat(n.trim())).filter(n => !isNaN(n));
+        const speeds = speedsStr.split(',').map(n => parseFloat(n.trim())).filter(n => !isNaN(n));
+        
+        if (forces.length === 0 || speeds.length === 0) return alert("請輸入正確的測試數值");
+
+        testQueue = [];
+        forces.forEach(f => {
+            speeds.forEach(s => {
+                testQueue.push({ force: f, speed: s });
+            });
+        });
+
+        isAutoTesting = true;
+        btnAutoTest.disabled = true;
+        btnSim.disabled = true;
+        
+        resultsLog.style.display = 'flex';
+        const headers = resultsLog.innerHTML.split('</div>')[0] + '</div>';
+        resultsLog.innerHTML = headers; 
+        
+        runNextAutoTest();
+    });
+
+    function runNextAutoTest() {
+        if (testQueue.length === 0) {
+            isAutoTesting = false;
+            btnAutoTest.disabled = false;
+            btnSim.disabled = false;
+            btnAutoTest.innerText = "🚀 重新開始批次測試";
+            alert("✅ 所有條件測試完畢！請查看日誌。");
+            return;
+        }
+        
+        currentTestConfig = testQueue.shift();
+        btnAutoTest.innerText = `⚙️ 測試中... 剩餘 ${testQueue.length} 組`;
+        initSimulation(); 
+    }
+
+    function initSimulation() {
+        if (!blueprint) return;
+        if (render) { Render.stop(render); render.canvas.remove(); Runner.stop(runner); Engine.clear(engine); }
+        
+        simActive = true;
+        isDraggingHandle = false;
+        currentForceKgf = 0;
+        actualSpeedCmS = 0;
+        looseBodies = []; 
+        wheelsList = [];
+        autoTestTick = 0;
+        btnResetPos.style.display = isAutoTesting ? 'none' : 'block';
+
+        const gapCm = parseFloat(document.getElementById('val_w').value);
+        const floorFriction = parseFloat(document.getElementById('val_floor_friction').value) || 0.3;
+        const airFrictionVal = parseFloat(document.getElementById('val_air_friction').value) || 0;
+        const simDir = parseInt(document.getElementById('val_direction').value) || 1;
+        
+        // [新增] 讀取 UI 設定的達標線距離，並換算為像素 (px)
+        const finishDistCm = parseFloat(document.getElementById('val_finish_dist').value) || 37.5;
+        const finishDistPx = finishDistCm * simScale;
+        
+        let maxForceKgf = isAutoTesting ? currentTestConfig.force : parseFloat(document.getElementById('val_f').value);
+        let targetSpeedCmS = isAutoTesting ? currentTestConfig.speed : parseFloat(document.getElementById('val_speed').value);
+        let mode = isAutoTesting ? 'auto' : document.getElementById('val_mode').value;
+
+        engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
+        render = Render.create({ 
+            element: workspace, engine: engine, 
+            options: { width: workspace.clientWidth, height: workspace.clientHeight, wireframes: false, background: '#ecf0f1', hasBounds: true } 
+        });
+
+        const floorY = workspace.clientHeight - 100;
+        const gapStartX = 500; 
+        const gapPx = gapCm * simScale;
+        
+        const startX = simDir === 1 ? gapStartX - 300 : gapStartX + gapPx + 300;
+        
+        // [修改] 達標線座標套用自訂距離
+        finishLineX = simDir === 1 ? gapStartX + gapPx + finishDistPx : gapStartX - finishDistPx; 
+        failLineY = floorY + 60; 
+
+        const groundOpts = { 
+            isStatic: true, render: { fillStyle: '#95a5a6' }, 
+            friction: floorFriction, 
+            frictionStatic: floorFriction * 2.5, 
+            slop: 0.01, chamfer: { radius: 2 } 
+        };
+        const groundLength = 50000;
+        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, groundOpts);
+        const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, groundOpts);
+
+        const carGroup = Body.nextGroup(true);
+        let rigidParts = [];
+        let handleConfig = null;
+
+        blueprint.parts.forEach(p => {
+            const w_px = (p.w || 0) * simScale; const h_px = (p.h || 0) * simScale; const r_px = (p.r || 0) * simScale;
+            
+            const worldX = startX + (p.x * simScale); 
+            const worldY = floorY - 150 + (p.y * simScale); 
+            const angleRad = (p.angle || 0) * Math.PI / 180;
+
+            if (p.type === 'handle') { handleConfig = { x: worldX, y: worldY }; return; }
+
+            const area = p.type === 'rect' ? w_px * h_px : Math.PI * r_px * r_px;
+            const computedDensity = p.mass / area;
+
+            if (p.type === 'rect') {
+                const rectBody = Bodies.rectangle(worldX, worldY, w_px, h_px, { 
+                    render: { fillStyle: p.color }, density: computedDensity, angle: angleRad, collisionFilter: p.isLoose ? {} : { group: carGroup },
+                    frictionAir: airFrictionVal 
+                });
+                rectBody.customData = p; 
+                if (p.isLoose) looseBodies.push(rectBody); else rigidParts.push(rectBody);
+            } 
+            else if (p.type === 'wheel') {
+                const isSoft = p.tireType === 'soft';
+                const wheelBody = Bodies.circle(worldX, worldY, r_px, { 
+                    collisionFilter: { group: carGroup }, 
+                    friction: isSoft ? 0.6 : 0.05, 
+                    frictionStatic: isSoft ? 1.5 : 0.3, 
+                    frictionAir: airFrictionVal, 
+                    density: computedDensity,
+                    slop: 0,
+                    restitution: 0,
+                    render: { fillStyle: p.color }
+                });
+                wheelBody.customData = p; 
+                // 軟輪硬輪都合進 compound body，徹底避免 Constraint 在大負重下陷地
+                rigidParts.push(wheelBody);
+                // wheelsList 只做記錄用（供日誌 fallback 或軸承阻力計算）
+                wheelsList.push(wheelBody);
+            }
+        });
+
+        trolleyBody = Body.create({ parts: rigidParts, collisionFilter: { group: carGroup }, friction: 0.001, frictionAir: airFrictionVal });
+
+        if(handleConfig) handlePointLocal = { x: handleConfig.x - trolleyBody.position.x, y: handleConfig.y - trolleyBody.position.y }; 
+        else handlePointLocal = { x: 0, y: 0 };
+
+        // ✅ 正確的 kgf → Matter.js 力 換算係數
+        // Matter.js 內部質量單位 = kg，gravity.y = 1 (px/tick²)
+        // 1 kgf 對應 1kg 物體的重力大小 = trolleyBody.mass Matter單位
+        // 因為 density = kg/px²，所以 matter_mass ≈ real_mass_kg
+        const kgfToMatter = parseFloat(document.getElementById('val_force_coeff').value) || 0.0005;
+        const kP = parseFloat(document.getElementById('val_kP').value) || 0.08;
+
+        // 軟硬輪皆已合進 trolleyBody，不需要 Constraint
+        Composite.add(engine.world, [g1, g2, trolleyBody, ...looseBodies]);
+
+        Events.on(engine, 'beforeUpdate', () => {
+            if (!simActive || !trolleyBody) return;
+            if (isNaN(trolleyBody.position.x)) { simActive = false; alert("⚠ 物理崩潰！"); return; }
+            if (trolleyBody.speed > 80) Body.setSpeed(trolleyBody, 80);
+
+            // 軸承阻力：對台車本體施加速度衰減（模擬培林阻力）
+            if (wheelsList.length > 0) {
+                const maxAxleFric = Math.max(...wheelsList.map(w => (w.customData && w.customData.axleFriction) || 0));
+                if (maxAxleFric > 0 && Math.abs(trolleyBody.velocity.x) > 0.01) {
+                    const brakeFactor = 1 - maxAxleFric * 0.05;
+                    Body.setVelocity(trolleyBody, { x: trolleyBody.velocity.x * brakeFactor, y: trolleyBody.velocity.y });
+                }
+            }
+
+            const cosA = Math.cos(trolleyBody.angle); const sinA = Math.sin(trolleyBody.angle);
+            const hWorld = { 
+                x: trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA), 
+                y: trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA) 
+            };
+            
+            actualSpeedCmS = (trolleyBody.velocity.x * 60) / simScale * simDir;
+
+            if (mode === 'auto') {
+                // PD 比例控制：力隨速度誤差平滑縮放，避免 bang-bang 造成抖動
+                const speedError = targetSpeedCmS - actualSpeedCmS;
+                let forceFraction = Math.max(0, Math.min(1, speedError * kP));
+                const appliedForce = maxForceKgf * forceFraction * kgfToMatter * simDir;
+                if (Math.abs(speedError) > 0.5) {
+                    Body.applyForce(trolleyBody, hWorld, { x: appliedForce, y: 0 });
+                }
+                currentForceKgf = maxForceKgf * forceFraction;
+            } else if (mode === 'manual' && isDraggingHandle) {
+                const dx = mouseWorld.x - hWorld.x, dy = mouseWorld.y - hWorld.y;
+                let fx = dx * 0.00015, fy = dy * 0.00015;
+                const maxF = 0.05; 
+                fx = Math.max(-maxF, Math.min(maxF, fx)); fy = Math.max(-maxF, Math.min(maxF, fy));
+                Body.applyForce(trolleyBody, hWorld, { x: fx, y: fy });
+                currentForceKgf = Math.hypot(fx, fy) / kgfToMatter;
+            } else { currentForceKgf = 0; }
+
+            if (isAutoTesting) {
+                autoTestTick++;
+                let statusMsg = null;
+                let statusClass = "";
+
+                const isPassed = simDir === 1 ? (trolleyBody.position.x > finishLineX) : (trolleyBody.position.x < finishLineX);
+
+                if (isPassed) {
+                    statusMsg = "✅ 成功越過"; statusClass = "log-pass";
+                } else if (trolleyBody.position.y > failLineY) {
+                    statusMsg = "❌ 掉入溝槽"; statusClass = "log-fail";
+                } else if (Math.abs(trolleyBody.angle) > 1.22) { 
+                    statusMsg = "❌ 翻車傾覆"; statusClass = "log-fail";
+                } else if (autoTestTick > 60 * 12) { 
+                    statusMsg = "⚠️ 卡住超時"; statusClass = "log-stuck";
+                }
+
+                if (statusMsg) {
+                    simActive = false;
+                    
+                    let tireTypeStr = "未知";
+                    let tireRadiusStr = "未知";
+                    // 直接從原始藍圖讀取，不依賴執行時的 wheelsList（硬輪不在 wheelsList 裡）
+                    const wheelPart = blueprint.parts.find(p => p.type === 'wheel');
+                    if (wheelPart) {
+                        tireTypeStr = wheelPart.tireType === 'soft' ? '軟輪' : '硬輪';
+                        tireRadiusStr = wheelPart.r;
+                    }
+
+                    const logItem = document.createElement('div');
+                    logItem.className = 'log-item';
+                    const dirStr = simDir === 1 ? "➡️ 左至右" : "⬅️ 右至左";
+                    
+                    // [修改] 日誌中加入達標距離的顯示
+                    logItem.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:3px;">
+                            <span style="color:#bdc3c7;">[${dirStr}] 溝槽: <b>${gapCm}</b>cm | 達標: <b>${finishDistCm}</b>cm | 摩擦: <b>${floorFriction}</b> | 空阻: <b>${airFrictionVal}</b></span>
+                            <span style="color:#bdc3c7;">總重: <b>${currentTotalMassVal.toFixed(1)}</b>kg | 輪胎: <b>${tireTypeStr}</b>(R=<b>${tireRadiusStr}</b>)</span>
+                            <span style="color:#bdc3c7;">推力: <b>${maxForceKgf}</b>kgf | 速: <b>${targetSpeedCmS}</b>cm/s</span>
+                        </div>
+                        <span class="${statusClass}" style="display:flex; align-items:center; font-size:14px; margin-left:10px;">${statusMsg}</span>
+                    `;
+                    resultsLog.appendChild(logItem);
+                    resultsLog.scrollTop = resultsLog.scrollHeight; 
+                    
+                    setTimeout(runNextAutoTest, 500);
+                }
+            }
+        });
+
+        Events.on(render, 'afterRender', () => {
+            if (!trolleyBody || isNaN(trolleyBody.position.x)) return;
+            const ctx = render.context;
+            
+            let totalMassX = trolleyBody.mass * trolleyBody.position.x;
+            let totalMassY = trolleyBody.mass * trolleyBody.position.y;
+            let totalSystemMass = trolleyBody.mass;
+
+            looseBodies.forEach(b => {
+                totalMassX += b.mass * b.position.x; totalMassY += b.mass * b.position.y; totalSystemMass += b.mass;
+            });
+
+            const systemCG = { x: totalMassX / totalSystemMass, y: totalMassY / totalSystemMass };
+
+            const cosA = Math.cos(trolleyBody.angle); const sinA = Math.sin(trolleyBody.angle);
+            const hWorld = { 
+                x: trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA), 
+                y: trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA) 
+            };
+            
+            ctx.save();
+            ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
+
+            ctx.beginPath(); ctx.moveTo(systemCG.x, systemCG.y); ctx.lineTo(systemCG.x, floorY + 100); 
+            ctx.strokeStyle = '#e74c3c'; ctx.lineWidth=2; ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
+            ctx.beginPath(); ctx.arc(systemCG.x, systemCG.y, 8, 0, Math.PI*2); 
+            ctx.fillStyle = '#f1c40f'; ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+
+            ctx.beginPath(); ctx.moveTo(finishLineX, floorY - 200); ctx.lineTo(finishLineX, floorY + 50);
+            ctx.strokeStyle = '#2ecc71'; ctx.lineWidth=2; ctx.setLineDash([10,10]); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle = '#2ecc71'; ctx.font = '12px sans-serif'; 
+            ctx.fillText('✅ 達標線', simDir === 1 ? finishLineX + 5 : finishLineX - 60, floorY - 180);
+
+            const drawPartInfo = (body) => {
+                if (!body.customData) return;
+                const p = body.customData;
+                const px = body.position.x;
+                const py = body.position.y;
+                
+                let labelX, labelY;
+                if (p.type === 'rect') {
+                    const dirOffset = (p.id % 2 === 0) ? -1 : 1; 
+                    labelX = px + (dirOffset * 50); 
+                    labelY = py - (p.h * simScale / 2) - 30; 
+                } else {
+                    labelX = px + (p.r * simScale) + 30;
+                    labelY = py + (p.r * simScale) + 30;
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(labelX, labelY + 2);
+                ctx.strokeStyle = 'rgba(52, 152, 219, 0.7)'; 
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([3, 3]); 
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                const textStr = `${p.name} (${p.mass}kg)`;
+                ctx.font = 'bold 13px "MingLiU", "PMingLiU", "細明體", serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.strokeText(textStr, labelX, labelY);
+
+                ctx.fillStyle = '#0984e3'; 
+                ctx.fillText(textStr, labelX, labelY);
+            };
+
+            if (trolleyBody && trolleyBody.parts) {
+                for (let i = 1; i < trolleyBody.parts.length; i++) {
+                    drawPartInfo(trolleyBody.parts[i]);
+                }
+            }
+            looseBodies.forEach(drawPartInfo);
+            // wheelsList 的輪子已包含在 trolleyBody.parts 內，不需要再畫一次
+
+            ctx.beginPath(); ctx.arc(hWorld.x, hWorld.y, isDraggingHandle ? 10 : 8, 0, Math.PI*2); 
+            ctx.fillStyle = isDraggingHandle || currentForceKgf > 0 ? '#e74c3c' : '#3498db'; 
+            ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+            if (isDraggingHandle && mode === 'manual') {
+                ctx.beginPath(); ctx.moveTo(hWorld.x, hWorld.y); ctx.lineTo(mouseWorld.x, mouseWorld.y);
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.8)'; ctx.lineWidth = 4; ctx.stroke();
+            }
+
+            ctx.restore();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            
+            ctx.fillStyle = 'rgba(44, 62, 80, 0.85)'; ctx.fillRect(20, 20, 280, 115);
+            ctx.fillStyle = '#ecf0f1'; ctx.font = 'bold 16px sans-serif';
+            let deg = (trolleyBody.angle * 180 / Math.PI) % 360;
+            if (deg > 180) deg -= 360; if (deg < -180) deg += 360;
+            
+            ctx.fillText(`📐 傾斜角度: ${Math.abs(deg).toFixed(1)}°`, 35, 45);
+            ctx.fillStyle = currentForceKgf > 0 ? '#e74c3c' : '#bdc3c7';
+            ctx.fillText(`💪 即時推力: ${currentForceKgf.toFixed(1)} kgf`, 35, 70);
+            
+            ctx.fillStyle = actualSpeedCmS >= targetSpeedCmS * 0.95 ? '#2ecc71' : '#f1c40f';
+            ctx.fillText(`🚀 速度: ${Math.max(0, actualSpeedCmS).toFixed(1)} / ${targetSpeedCmS} cm/s`, 35, 95);
+
+            ctx.fillStyle = '#bdc3c7'; ctx.font = '13px sans-serif';
+            let statusText = isAutoTesting ? `批次掃描中 (第 ${testQueue.length} 組剩餘)` : 
+                            (mode === 'manual' ? (isDraggingHandle ? '手動推行中' : '等待操作') : 
+                            (currentForceKgf > 0 ? '自動運行 (加速)' : '自動運行 (定速)'));
+            ctx.fillText(`狀態：${statusText}`, 35, 115);
+        });
+
+        Events.on(render, 'beforeRender', () => {
+            if (trolleyBody && !isNaN(trolleyBody.position.x)) {
+                const halfWidth = render.options.width / 2;
+                Render.lookAt(render, { 
+                    min: { x: trolleyBody.position.x - halfWidth, y: 0 }, 
+                    max: { x: trolleyBody.position.x + halfWidth, y: render.options.height } 
+                });
+            }
+        });
+
+        Render.run(render); runner = Runner.create(); Runner.run(runner, engine);
+    }
+
+    btnSim.addEventListener('click', () => { isAutoTesting = false; initSimulation(); });
+    btnResetPos.addEventListener('click', () => { isAutoTesting = false; initSimulation(); });
+</script>
+</body>
+</html>
