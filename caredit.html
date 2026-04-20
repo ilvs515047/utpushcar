@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>1. 可視化台車造車廠 (全公制+背景平移版)</title>
+    <title>UT台車編輯器</title>
     <style>
         body { font-family: "Songti TC", serif; background: #f7f5f0; color: #4a443c; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
         .toolbar { width: 250px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
@@ -70,12 +70,18 @@
             <div class="input-group" id="group_h"><label>高度 (cm)</label><input type="number" id="p_h" onchange="updatePart()"></div>
             
             <div class="input-group" id="group_angle"><label>旋轉角度 (°)</label><input type="number" id="p_angle" value="0" onchange="updatePart()"></div>
+            
             <div class="input-group" id="group_loose" style="display:none; flex-direction: column; align-items: flex-start; gap: 5px;">
                 <label style="width:100%; border-top:1px solid #eee; padding-top:5px; margin-top:5px;">結構屬性</label>
                 <select id="p_loose" style="width: 100%;" onchange="updatePart()">
                     <option value="false">🔒 固定於車架 (組成剛體)</option>
                     <option value="true">📦 獨立不受綁定 (受重力影響)</option>
                 </select>
+            </div>
+            
+            <div class="input-group" id="group_friction" style="display:none; flex-direction: column; align-items: flex-start; gap: 5px;">
+                <label style="width:100%; border-top:1px solid #eee; padding-top:5px; margin-top:5px;">表面摩擦力 (0極滑 ~ 2極澀)</label>
+                <input type="number" id="p_fric" step="0.1" min="0" max="2" value="0.1" onchange="updatePart()" style="width: 100%;">
             </div>
 
             <div class="input-group" id="group_r" style="display:none;"><label>半徑 (cm)</label><input type="number" id="p_r" onchange="updatePart()"></div>
@@ -112,7 +118,7 @@
     
     let bgImage = null; 
     let bgScale = 1.0;  
-    let bgOffset = { x: 0, y: 0 }; // 新增：背景偏移量
+    let bgOffset = { x: 0, y: 0 }; 
 
     function resize() {
         width = canvas.parentElement.clientWidth;
@@ -133,7 +139,7 @@
                 bgImage = img;
                 document.getElementById('bg_scale_group').style.display = 'flex';
                 bgScale = 1.0;
-                bgOffset = { x: 0, y: 0 }; // 載入新圖時重置偏移
+                bgOffset = { x: 0, y: 0 }; 
                 document.getElementById('bg_scale').value = 1.0;
                 document.getElementById('bg_scale_val').innerText = '100%';
                 draw();
@@ -149,12 +155,11 @@
         draw(); 
     }
 
-    // 新增：鍵盤事件監聽 (用於移動背景)
-    canvas.addEventListener('mouseenter', () => canvas.focus()); // 滑鼠進入時自動聚焦
+    canvas.addEventListener('mouseenter', () => canvas.focus()); 
     canvas.addEventListener('keydown', function(e) {
-        if (!bgImage) return; // 只有在有背景圖時才生效
+        if (!bgImage) return; 
         
-        const moveSpeed = 5; // 每次移動的像素
+        const moveSpeed = 5; 
         let moved = false;
 
         if (e.key === 'ArrowUp' || e.key === 'w') { bgOffset.y -= moveSpeed; moved = true; }
@@ -163,7 +168,7 @@
         if (e.key === 'ArrowRight' || e.key === 'd') { bgOffset.x += moveSpeed; moved = true; }
 
         if (moved) {
-            e.preventDefault(); // 防止網頁捲動
+            e.preventDefault(); 
             draw();
         }
     });
@@ -195,7 +200,8 @@
     });
 
     function addPart(type, name, w, h, mass, color) {
-        const p = { id: nextId++, type, name, x: 0, y: 0, w, h, r: w, mass, color, tireType: 'hard', angle: 0, isLoose: false, axleFriction: 0.05 };
+        // 新增 friction: 0.1 預設屬性
+        const p = { id: nextId++, type, name, x: 0, y: 0, w, h, r: w, mass, color, tireType: 'hard', angle: 0, isLoose: false, axleFriction: 0.05, friction: 0.1 };
         parts.push(p);
         selectPart(p.id);
         draw();
@@ -267,6 +273,7 @@
         
         document.getElementById('group_angle').style.display = (p.type === 'rect' || p.type === 'handle') ? 'flex' : 'none';
         document.getElementById('group_loose').style.display = p.type === 'rect' ? 'flex' : 'none';
+        document.getElementById('group_friction').style.display = p.type === 'rect' ? 'flex' : 'none';
         
         document.getElementById('group_axle').style.display = p.type === 'wheel' ? 'flex' : 'none';
         
@@ -274,6 +281,7 @@
             document.getElementById('p_w').value = p.w; 
             document.getElementById('p_h').value = p.h; 
             document.getElementById('p_loose').value = p.isLoose ? "true" : "false";
+            document.getElementById('p_fric').value = p.friction !== undefined ? p.friction : 0.1;
         }
         if (p.type === 'rect' || p.type === 'handle') {
             document.getElementById('p_angle').value = p.angle || 0;
@@ -300,6 +308,7 @@
             p.w = parseFloat(document.getElementById('p_w').value)||1; 
             p.h = parseFloat(document.getElementById('p_h').value)||1; 
             p.isLoose = document.getElementById('p_loose').value === "true";
+            p.friction = parseFloat(document.getElementById('p_fric').value) || 0;
         }
         if (p.type === 'wheel') { 
             p.r = parseFloat(document.getElementById('p_r').value)||1; 
@@ -319,7 +328,6 @@
             ctx.globalAlpha = 0.4;
             const imgW = bgImage.width * bgScale;
             const imgH = bgImage.height * bgScale;
-            // 套用 bgOffset 偏移量
             ctx.drawImage(bgImage, centerX - imgW / 2 + bgOffset.x, centerY - imgH / 2 + bgOffset.y, imgW, imgH);
             ctx.restore();
         }
