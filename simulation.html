@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+動態捲尺)</title>
+    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+多條動態捲尺)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
@@ -124,8 +124,11 @@
             <button id="btn_reset_pos" class="btn-warning" style="display:none; flex: 1;">🔄 重置位置</button>
         </div>
         
-        <!-- 💡 新增的量尺工具按鈕 -->
-        <button id="btn_measure" class="btn-outline btn-measure">📏 開啟滑鼠捲尺測量</button>
+        <!-- 💡 更新的量尺工具按鈕 -->
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button id="btn_measure" class="btn-outline btn-measure" style="flex: 3;">📏 開啟滑鼠捲尺測量</button>
+            <button id="btn_clear_measure" class="btn-outline btn-measure" style="flex: 1; display: none;" title="清除所有量測線">🗑️ 清除</button>
+        </div>
 
         <div class="section-title">🤖 批次條件探索 (交叉測試)</div>
         <div class="input-group">
@@ -152,6 +155,7 @@
     const btnResetPos = document.getElementById('btn_reset_pos');
     const btnAutoTest = document.getElementById('btn_auto_test');
     const btnMeasure = document.getElementById('btn_measure');
+    const btnClearMeasure = document.getElementById('btn_clear_measure');
     const infoBox = document.getElementById('info');
     const workspace = document.getElementById('workspace');
     const resultsLog = document.getElementById('results_log');
@@ -181,12 +185,12 @@
     let failLineY = 0;
     let currentTotalMassVal = 0; 
 
-    // --- 📏 捲尺測量工具變數 ---
+    // --- 📏 多條捲尺測量工具變數 ---
     let isMeasureMode = false;
     let isMeasuring = false;
-    let hasMeasurement = false;
-    let measureStart = { x: 0, y: 0 };
-    let measureEnd = { x: 0, y: 0 };
+    let measurements = []; // 儲存所有的量測線
+    let currentMeasureStart = { x: 0, y: 0 };
+    let currentMeasureEnd = { x: 0, y: 0 };
 
     btnMeasure.addEventListener('click', () => {
         isMeasureMode = !isMeasureMode;
@@ -194,13 +198,18 @@
             btnMeasure.classList.add('active');
             btnMeasure.innerText = "📏 捲尺測量中... (點擊關閉)";
             workspace.style.cursor = "crosshair";
+            btnClearMeasure.style.display = "block";
         } else {
             btnMeasure.classList.remove('active');
             btnMeasure.innerText = "📏 開啟滑鼠捲尺測量";
             workspace.style.cursor = "default";
-            hasMeasurement = false; // 關閉時清空測量線
+            btnClearMeasure.style.display = "none";
             isMeasuring = false;
         }
+    });
+
+    btnClearMeasure.addEventListener('click', () => {
+        measurements = []; // 清空所有量測線
     });
 
     function saveParams() {
@@ -283,9 +292,8 @@
         // 📏 如果處於量尺模式，攔截滑鼠事件作為測量用途
         if (isMeasureMode) {
             isMeasuring = true;
-            hasMeasurement = true;
-            measureStart = { x: mouseWorld.x, y: mouseWorld.y };
-            measureEnd = { x: mouseWorld.x, y: mouseWorld.y };
+            currentMeasureStart = { x: mouseWorld.x, y: mouseWorld.y };
+            currentMeasureEnd = { x: mouseWorld.x, y: mouseWorld.y };
             return;
         }
 
@@ -301,13 +309,22 @@
     
     window.addEventListener('mouseup', () => { 
         isDraggingHandle = false; 
-        if (isMeasuring) isMeasuring = false; // 結束測量拉拽，但保留線段在畫面上
+        if (isMeasuring) {
+            isMeasuring = false;
+            // 如果拉動的距離大於 5px，則將這條線加入陣列保存 (避免單純點擊造成殘影)
+            if (Math.hypot(currentMeasureEnd.x - currentMeasureStart.x, currentMeasureEnd.y - currentMeasureStart.y) > 5) {
+                measurements.push({
+                    start: { x: currentMeasureStart.x, y: currentMeasureStart.y },
+                    end: { x: currentMeasureEnd.x, y: currentMeasureEnd.y }
+                });
+            }
+        }
     });
     
     workspace.addEventListener('mousemove', (e) => { 
         if(simActive) updateMouseWorld(e); 
         if (isMeasuring) {
-            measureEnd = { x: mouseWorld.x, y: mouseWorld.y };
+            currentMeasureEnd = { x: mouseWorld.x, y: mouseWorld.y };
         }
     });
 
@@ -576,6 +593,47 @@
             }
         });
 
+        // 獨立出繪製量測線的功能
+        function drawMeasureTape(ctx, start, end) {
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.strokeStyle = '#9b59b6'; // 紫色測量線
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 畫起始與終點的小圓點
+            ctx.beginPath();
+            ctx.arc(start.x, start.y, 4, 0, Math.PI*2);
+            ctx.arc(end.x, end.y, 4, 0, Math.PI*2);
+            ctx.fillStyle = '#9b59b6';
+            ctx.fill();
+
+            // 計算距離 (cm)
+            let distPx = Math.hypot(end.x - start.x, end.y - start.y);
+            let distCm = distPx / simScale;
+            
+            // 畫在線段中間的文字
+            let midX = (start.x + end.x) / 2;
+            let midY = (start.y + end.y) / 2;
+            let text = `${distCm.toFixed(1)} cm`;
+            
+            ctx.font = 'bold 14px sans-serif';
+            let textWidth = ctx.measureText(text).width;
+            
+            // 文字背景
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(midX - textWidth/2 - 6, midY - 12 - 8, textWidth + 12, 24);
+            
+            // 文字
+            ctx.fillStyle = '#f1c40f'; // 黃色字體更醒目
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, midX, midY - 10);
+        }
+
         Events.on(render, 'afterRender', () => {
             if (!trolleyBody || isNaN(trolleyBody.position.x)) return;
             const ctx = render.context;
@@ -600,46 +658,13 @@
             ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
 
             // ==========================================
-            // 📏 新增功能：繪製滑鼠拉拽的捲尺測量線
+            // 📏 繪製所有的捲尺測量線
             // ==========================================
-            if (hasMeasurement) {
-                ctx.beginPath();
-                ctx.moveTo(measureStart.x, measureStart.y);
-                ctx.lineTo(measureEnd.x, measureEnd.y);
-                ctx.strokeStyle = '#9b59b6'; // 紫色測量線
-                ctx.lineWidth = 2;
-                ctx.setLineDash([5, 5]);
-                ctx.stroke();
-                ctx.setLineDash([]);
-
-                // 畫起始與終點的小圓點
-                ctx.beginPath();
-                ctx.arc(measureStart.x, measureStart.y, 4, 0, Math.PI*2);
-                ctx.arc(measureEnd.x, measureEnd.y, 4, 0, Math.PI*2);
-                ctx.fillStyle = '#9b59b6';
-                ctx.fill();
-
-                // 計算距離 (cm)
-                let distPx = Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y);
-                let distCm = distPx / simScale;
-                
-                // 畫在線段中間的文字
-                let midX = (measureStart.x + measureEnd.x) / 2;
-                let midY = (measureStart.y + measureEnd.y) / 2;
-                let text = `${distCm.toFixed(1)} cm`;
-                
-                ctx.font = 'bold 14px sans-serif';
-                let textWidth = ctx.measureText(text).width;
-                
-                // 文字背景
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(midX - textWidth/2 - 6, midY - 12 - 8, textWidth + 12, 24);
-                
-                // 文字
-                ctx.fillStyle = '#f1c40f'; // 黃色字體更醒目
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(text, midX, midY - 10);
+            measurements.forEach(m => drawMeasureTape(ctx, m.start, m.end));
+            
+            // 如果正在拉拽，即時畫出目前這一條
+            if (isMeasuring) {
+                drawMeasureTape(ctx, currentMeasureStart, currentMeasureEnd);
             }
             // ==========================================
 
