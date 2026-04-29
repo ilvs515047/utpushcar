@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2. 台車測試 (雙向+真實摩擦+空阻+參數存取版+量尺)</title>
+    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+動態捲尺)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
@@ -20,11 +20,13 @@
         .btn-danger { background: #e74c3c; color: white; } .btn-danger:hover { background: #c0392b; }
         .btn-outline { background: transparent; border: 1px solid #bdc3c7; color: #ecf0f1; padding: 6px; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
         .btn-outline:hover { background: rgba(189, 195, 199, 0.2); }
+        .btn-measure { border-color: #9b59b6; color: #9b59b6; font-size: 14px;}
+        .btn-measure:hover { background: rgba(155, 89, 182, 0.2); }
+        .btn-measure.active { background: rgba(155, 89, 182, 0.4); color: #fff; border-color: #fff;}
         
-        #workspace { flex: 1; background: #ecf0f1; border-radius: 8px; overflow: hidden; position: relative; box-shadow: inset 0 0 20px rgba(0,0,0,0.1);}
+        #workspace { flex: 1; background: #ecf0f1; border-radius: 8px; overflow: hidden; position: relative; box-shadow: inset 0 0 20px rgba(0,0,0,0.1); cursor: crosshair;}
         #info { font-size: 13px; color: #bdc3c7; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; line-height: 1.4; }
         
-        /* 💡 修正 2: 讓報告視窗可以自由調整大小 (resize: vertical) */
         #results_log { 
             background: #1a252f; 
             padding: 10px; 
@@ -116,8 +118,14 @@
             <label>🎛️ 速度控制增益 kP <span style="font-size:11px;color:#7f8c8d;">(預設0.08)</span></label>
             <input type="number" id="val_kP" value="0.08" step="0.01" min="0.01" max="1.0" style="font-family:monospace;">
         </div>
-        <button id="btn_sim" disabled>▶️ 開始單次驗證</button>
-        <button id="btn_reset_pos" class="btn-warning" style="display:none;">🔄 重置台車位置</button>
+        
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button id="btn_sim" disabled style="flex: 1;">▶️ 開始單次驗證</button>
+            <button id="btn_reset_pos" class="btn-warning" style="display:none; flex: 1;">🔄 重置位置</button>
+        </div>
+        
+        <!-- 💡 新增的量尺工具按鈕 -->
+        <button id="btn_measure" class="btn-outline btn-measure">📏 開啟滑鼠捲尺測量</button>
 
         <div class="section-title">🤖 批次條件探索 (交叉測試)</div>
         <div class="input-group">
@@ -143,6 +151,7 @@
     const btnSim = document.getElementById('btn_sim');
     const btnResetPos = document.getElementById('btn_reset_pos');
     const btnAutoTest = document.getElementById('btn_auto_test');
+    const btnMeasure = document.getElementById('btn_measure');
     const infoBox = document.getElementById('info');
     const workspace = document.getElementById('workspace');
     const resultsLog = document.getElementById('results_log');
@@ -172,8 +181,27 @@
     let failLineY = 0;
     let currentTotalMassVal = 0; 
 
-    // --- 在全域也保留 gapStartX 的參考，方便在 afterRender 計算量尺 ---
-    let gapStartXGlobal = 500; 
+    // --- 📏 捲尺測量工具變數 ---
+    let isMeasureMode = false;
+    let isMeasuring = false;
+    let hasMeasurement = false;
+    let measureStart = { x: 0, y: 0 };
+    let measureEnd = { x: 0, y: 0 };
+
+    btnMeasure.addEventListener('click', () => {
+        isMeasureMode = !isMeasureMode;
+        if (isMeasureMode) {
+            btnMeasure.classList.add('active');
+            btnMeasure.innerText = "📏 捲尺測量中... (點擊關閉)";
+            workspace.style.cursor = "crosshair";
+        } else {
+            btnMeasure.classList.remove('active');
+            btnMeasure.innerText = "📏 開啟滑鼠捲尺測量";
+            workspace.style.cursor = "default";
+            hasMeasurement = false; // 關閉時清空測量線
+            isMeasuring = false;
+        }
+    });
 
     function saveParams() {
         const params = {
@@ -251,6 +279,16 @@
     workspace.addEventListener('mousedown', (e) => {
         if(!simActive || isAutoTesting) return; 
         updateMouseWorld(e);
+        
+        // 📏 如果處於量尺模式，攔截滑鼠事件作為測量用途
+        if (isMeasureMode) {
+            isMeasuring = true;
+            hasMeasurement = true;
+            measureStart = { x: mouseWorld.x, y: mouseWorld.y };
+            measureEnd = { x: mouseWorld.x, y: mouseWorld.y };
+            return;
+        }
+
         const mode = document.getElementById('val_mode').value;
         if (mode === 'manual' && trolleyBody && handlePointLocal) {
             const cosA = Math.cos(trolleyBody.angle);
@@ -260,8 +298,18 @@
             if (Math.hypot(mouseWorld.x - hx, mouseWorld.y - hy) < 50) isDraggingHandle = true; 
         }
     });
-    window.addEventListener('mouseup', () => { isDraggingHandle = false; });
-    workspace.addEventListener('mousemove', (e) => { if(simActive) updateMouseWorld(e); });
+    
+    window.addEventListener('mouseup', () => { 
+        isDraggingHandle = false; 
+        if (isMeasuring) isMeasuring = false; // 結束測量拉拽，但保留線段在畫面上
+    });
+    
+    workspace.addEventListener('mousemove', (e) => { 
+        if(simActive) updateMouseWorld(e); 
+        if (isMeasuring) {
+            measureEnd = { x: mouseWorld.x, y: mouseWorld.y };
+        }
+    });
 
     btnAutoTest.addEventListener('click', () => {
         if (!blueprint) return;
@@ -363,7 +411,6 @@
 
         const floorY = workspace.clientHeight - 100;
         const gapStartX = 500; 
-        gapStartXGlobal = gapStartX; // 寫入全域變數供量尺使用
         const gapPx = gapCm * simScale;
         
         const startX = simDir === 1 ? gapStartX - 300 : gapStartX + gapPx + 300;
@@ -463,6 +510,7 @@
             
             actualSpeedCmS = (trolleyBody.velocity.x * 60) / simScale * simDir;
 
+            // ⚠️ 當處於量尺模式時，為了防止干擾測量，手動拉力無效化
             if (mode === 'auto') {
                 const speedError = targetSpeedCmS - actualSpeedCmS;
                 let forceFraction = Math.max(0, Math.min(1, speedError * kP));
@@ -471,7 +519,7 @@
                     Body.applyForce(trolleyBody, hWorld, { x: appliedForce, y: 0 });
                 }
                 currentForceKgf = maxForceKgf * forceFraction;
-            } else if (mode === 'manual' && isDraggingHandle) {
+            } else if (mode === 'manual' && isDraggingHandle && !isMeasureMode) {
                 const dx = mouseWorld.x - hWorld.x, dy = mouseWorld.y - hWorld.y;
                 let fx = dx * 0.00015, fy = dy * 0.00015;
                 const maxF = 0.05; 
@@ -552,45 +600,46 @@
             ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
 
             // ==========================================
-            // 📏 新增功能：繪製動態地面量尺 (Ruler)
+            // 📏 新增功能：繪製滑鼠拉拽的捲尺測量線
             // ==========================================
-            const viewMinX = render.bounds.min.x;
-            const viewMaxX = render.bounds.max.x;
-            const rulerY = floorY + 50; // 量尺置於地面下方 50px 處
-            
-            // 畫量尺水平主線
-            ctx.beginPath();
-            ctx.moveTo(viewMinX, rulerY);
-            ctx.lineTo(viewMaxX, rulerY);
-            ctx.strokeStyle = 'rgba(52, 73, 94, 0.4)'; // 淺灰藍色
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            const tickCm = 10; // 每 10cm 一個刻度
-            const tickPx = tickCm * simScale;
-            
-            // 計算當前畫面內的第一個刻度起始 X 座標
-            let startTickPx = Math.floor(viewMinX / tickPx) * tickPx;
-
-            ctx.fillStyle = 'rgba(52, 73, 94, 0.7)'; // 刻度數字顏色
-            ctx.font = '11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-
-            // 繪製視野範圍內的刻度與數字
-            for (let x = startTickPx; x <= viewMaxX; x += tickPx) {
+            if (hasMeasurement) {
                 ctx.beginPath();
-                ctx.moveTo(x, rulerY);
-                // 判斷是否為 50cm 的主刻度 (以溝槽起點 gapStartXGlobal 為 0基準)
-                let cmVal = Math.round((x - gapStartXGlobal) / simScale);
-                let isMajor = cmVal % 50 === 0;
-                
-                ctx.lineTo(x, rulerY + (isMajor ? 12 : 6)); // 主刻度線較長
+                ctx.moveTo(measureStart.x, measureStart.y);
+                ctx.lineTo(measureEnd.x, measureEnd.y);
+                ctx.strokeStyle = '#9b59b6'; // 紫色測量線
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
                 ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 畫起始與終點的小圓點
+                ctx.beginPath();
+                ctx.arc(measureStart.x, measureStart.y, 4, 0, Math.PI*2);
+                ctx.arc(measureEnd.x, measureEnd.y, 4, 0, Math.PI*2);
+                ctx.fillStyle = '#9b59b6';
+                ctx.fill();
+
+                // 計算距離 (cm)
+                let distPx = Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y);
+                let distCm = distPx / simScale;
                 
-                if (isMajor) {
-                    ctx.fillText(cmVal + ' cm', x, rulerY + 16);
-                }
+                // 畫在線段中間的文字
+                let midX = (measureStart.x + measureEnd.x) / 2;
+                let midY = (measureStart.y + measureEnd.y) / 2;
+                let text = `${distCm.toFixed(1)} cm`;
+                
+                ctx.font = 'bold 14px sans-serif';
+                let textWidth = ctx.measureText(text).width;
+                
+                // 文字背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(midX - textWidth/2 - 6, midY - 12 - 8, textWidth + 12, 24);
+                
+                // 文字
+                ctx.fillStyle = '#f1c40f'; // 黃色字體更醒目
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, midX, midY - 10);
             }
             // ==========================================
 
@@ -649,10 +698,10 @@
             }
             looseBodies.forEach(drawPartInfo);
 
-            ctx.beginPath(); ctx.arc(hWorld.x, hWorld.y, isDraggingHandle ? 10 : 8, 0, Math.PI*2); 
-            ctx.fillStyle = isDraggingHandle || currentForceKgf > 0 ? '#e74c3c' : '#3498db'; 
+            ctx.beginPath(); ctx.arc(hWorld.x, hWorld.y, isDraggingHandle && !isMeasureMode ? 10 : 8, 0, Math.PI*2); 
+            ctx.fillStyle = isDraggingHandle && !isMeasureMode || currentForceKgf > 0 ? '#e74c3c' : '#3498db'; 
             ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
-            if (isDraggingHandle && mode === 'manual') {
+            if (isDraggingHandle && mode === 'manual' && !isMeasureMode) {
                 ctx.beginPath(); ctx.moveTo(hWorld.x, hWorld.y); ctx.lineTo(mouseWorld.x, mouseWorld.y);
                 ctx.strokeStyle = 'rgba(231, 76, 60, 0.8)'; ctx.lineWidth = 4; ctx.stroke();
             }
@@ -674,8 +723,12 @@
 
             ctx.fillStyle = '#bdc3c7'; ctx.font = '13px sans-serif';
             let statusText = isAutoTesting ? `批次掃描中 (第 ${testQueue.length} 組剩餘)` : 
-                             (mode === 'manual' ? (isDraggingHandle ? '手動推行中' : '等待操作') : 
+                             (mode === 'manual' ? (isDraggingHandle && !isMeasureMode ? '手動推行中' : '等待操作') : 
                              (currentForceKgf > 0 ? '自動運行 (加速)' : '自動運行 (定速)'));
+            
+            // 提示測量狀態
+            if (isMeasureMode) statusText = "📏 捲尺測量模式";
+            
             ctx.fillText(`狀態：${statusText}`, 35, 115);
         });
 
