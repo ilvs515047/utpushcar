@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版)</title>
+    <title>2. 台車測試 (雙向+真實摩擦+空阻+參數存取版+量尺)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
@@ -172,6 +172,9 @@
     let failLineY = 0;
     let currentTotalMassVal = 0; 
 
+    // --- 在全域也保留 gapStartX 的參考，方便在 afterRender 計算量尺 ---
+    let gapStartXGlobal = 500; 
+
     function saveParams() {
         const params = {
             val_w: document.getElementById('val_w').value,
@@ -260,26 +263,21 @@
     window.addEventListener('mouseup', () => { isDraggingHandle = false; });
     workspace.addEventListener('mousemove', (e) => { if(simActive) updateMouseWorld(e); });
 
-    // 💡 修正 1: 自動測試的啟動與終止邏輯
     btnAutoTest.addEventListener('click', () => {
         if (!blueprint) return;
         
-        // 如果目前正在測試中，按下按鈕即「終止測試」
         if (isAutoTesting) {
             isAutoTesting = false;
             testQueue = [];
             
-            // 恢復按鈕外觀
             btnAutoTest.className = "btn-success";
             btnAutoTest.innerText = "🚀 開始自動掃描測試";
             btnSim.disabled = false;
             btnResetPos.style.display = 'block';
             
-            // 立即停止物理引擎
             simActive = false;
             if (runner) Runner.stop(runner);
             
-            // 寫入終止紀錄
             const logItem = document.createElement('div');
             logItem.className = 'log-item';
             logItem.innerHTML = `<span style="color:#e74c3c; width:100%; text-align:center;">🛑 已手動終止批次測試</span>`;
@@ -288,7 +286,6 @@
             return;
         }
 
-        // --- 以下為開始測試的邏輯 ---
         const forcesStr = document.getElementById('auto_forces').value;
         const speedsStr = document.getElementById('auto_speeds').value;
         const forces = forcesStr.split(',').map(n => parseFloat(n.trim())).filter(n => !isNaN(n));
@@ -305,9 +302,8 @@
 
         isAutoTesting = true;
         
-        // 變更按鈕外觀為「終止」
         btnAutoTest.className = "btn-danger";
-        btnAutoTest.disabled = false; // 確保按鈕可點擊來停止
+        btnAutoTest.disabled = false; 
         btnSim.disabled = true;
         
         resultsLog.style.display = 'flex';
@@ -318,7 +314,7 @@
     });
 
     function runNextAutoTest() {
-        if (!isAutoTesting) return; // 💡 如果中途被停止了，就不要再跑下一輪
+        if (!isAutoTesting) return; 
 
         if (testQueue.length === 0) {
             isAutoTesting = false;
@@ -367,6 +363,7 @@
 
         const floorY = workspace.clientHeight - 100;
         const gapStartX = 500; 
+        gapStartXGlobal = gapStartX; // 寫入全域變數供量尺使用
         const gapPx = gapCm * simScale;
         
         const startX = simDir === 1 ? gapStartX - 300 : gapStartX + gapPx + 300;
@@ -554,6 +551,49 @@
             ctx.save();
             ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
 
+            // ==========================================
+            // 📏 新增功能：繪製動態地面量尺 (Ruler)
+            // ==========================================
+            const viewMinX = render.bounds.min.x;
+            const viewMaxX = render.bounds.max.x;
+            const rulerY = floorY + 50; // 量尺置於地面下方 50px 處
+            
+            // 畫量尺水平主線
+            ctx.beginPath();
+            ctx.moveTo(viewMinX, rulerY);
+            ctx.lineTo(viewMaxX, rulerY);
+            ctx.strokeStyle = 'rgba(52, 73, 94, 0.4)'; // 淺灰藍色
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            const tickCm = 10; // 每 10cm 一個刻度
+            const tickPx = tickCm * simScale;
+            
+            // 計算當前畫面內的第一個刻度起始 X 座標
+            let startTickPx = Math.floor(viewMinX / tickPx) * tickPx;
+
+            ctx.fillStyle = 'rgba(52, 73, 94, 0.7)'; // 刻度數字顏色
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+
+            // 繪製視野範圍內的刻度與數字
+            for (let x = startTickPx; x <= viewMaxX; x += tickPx) {
+                ctx.beginPath();
+                ctx.moveTo(x, rulerY);
+                // 判斷是否為 50cm 的主刻度 (以溝槽起點 gapStartXGlobal 為 0基準)
+                let cmVal = Math.round((x - gapStartXGlobal) / simScale);
+                let isMajor = cmVal % 50 === 0;
+                
+                ctx.lineTo(x, rulerY + (isMajor ? 12 : 6)); // 主刻度線較長
+                ctx.stroke();
+                
+                if (isMajor) {
+                    ctx.fillText(cmVal + ' cm', x, rulerY + 16);
+                }
+            }
+            // ==========================================
+
             ctx.beginPath(); ctx.moveTo(systemCG.x, systemCG.y); ctx.lineTo(systemCG.x, floorY + 100); 
             ctx.strokeStyle = '#e74c3c'; ctx.lineWidth=2; ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
             ctx.beginPath(); ctx.arc(systemCG.x, systemCG.y, 8, 0, Math.PI*2); 
@@ -634,8 +674,8 @@
 
             ctx.fillStyle = '#bdc3c7'; ctx.font = '13px sans-serif';
             let statusText = isAutoTesting ? `批次掃描中 (第 ${testQueue.length} 組剩餘)` : 
-                            (mode === 'manual' ? (isDraggingHandle ? '手動推行中' : '等待操作') : 
-                            (currentForceKgf > 0 ? '自動運行 (加速)' : '自動運行 (定速)'));
+                             (mode === 'manual' ? (isDraggingHandle ? '手動推行中' : '等待操作') : 
+                             (currentForceKgf > 0 ? '自動運行 (加速)' : '自動運行 (定速)'));
             ctx.fillText(`狀態：${statusText}`, 35, 115);
         });
 
