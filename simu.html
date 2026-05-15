@@ -442,15 +442,12 @@
             slop: 0.01, chamfer: { radius: 2 } 
         };
         const groundLength = 3000;
-        const slope1 = -0.05; // 左段：右端低（往溝槽下坡）
-        const slope2 = 0.05;  // 右段：左端低（往溝槽下坡）
-
-        // 左段：右端對齊 floorY，中心要往上補償
+        const slope1 = -0.05; // 左段：靠近溝槽端下坡
+        const slope2 = 0.05;  // 右段：靠近溝槽端上坡
+        // 補償旋轉造成的右端下沉，讓溝槽邊緣維持在 floorY
         const g1OffsetY = (groundLength / 2) * Math.sin(Math.abs(slope1));
-        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25 - g1OffsetY, groundLength, 50, { ...groundOpts, angle: slope1 });
-
-        // 右段：左端對齊 floorY，中心也要補償
         const g2OffsetY = (groundLength / 2) * Math.sin(Math.abs(slope2));
+        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25 - g1OffsetY, groundLength, 50, { ...groundOpts, angle: slope1 });
         const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25 - g2OffsetY, groundLength, 50, { ...groundOpts, angle: slope2 });
 
         
