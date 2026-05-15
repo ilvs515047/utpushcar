@@ -435,33 +435,34 @@
         finishLineX = simDir === 1 ? gapStartX + gapPx + finishDistPx : gapStartX - finishDistPx; 
         failLineY = floorY + 60; 
 
-       const groundOpts = { 
+        const groundOpts = { 
             isStatic: true, render: { fillStyle: '#95a5a6' }, 
             friction: floorFriction, 
             frictionStatic: floorFriction * 2.5, 
             slop: 0.01, chamfer: { radius: 2 } 
         };
+        const groundLength = 50000;
 
-        const groundLength = 3000;
-        const slope = -0.05;  // 統一：左高右低
+        // 1. 設定傾斜角度 (例如 5度，正值代表順時針轉，也就是左高右低)
+        const tiltAngleDeg = 5; 
+        const tiltAngle = tiltAngleDeg * Math.PI / 180; // 轉為弧度
 
-        const g1OffsetY = (groundLength / 2) * Math.sin(Math.abs(slope));
-        const g2OffsetY = -(groundLength / 2) * Math.sin(Math.abs(slope));
+        // 2. 將角度加入地面屬性設定中
+        const tiltedGroundOpts = { ...groundOpts, angle: tiltAngle };
 
-        const g1 = Bodies.rectangle(
-            gapStartX - groundLength/2,
-            floorY + 25 - g1OffsetY,
-            groundLength, 50,
-            { ...groundOpts, angle: slope }
-        );
-        const g2 = Bodies.rectangle(
-            gapStartX + gapPx + groundLength/2,
-            floorY + 25 - g2OffsetY,
-            groundLength, 50,
-            { ...groundOpts, angle: slope }
-        );
+        // 3. 透過三角函數重新計算中心點 X, Y，確保溝槽邊緣完美接合
+        // (左邊地板 g1) 右側邊緣固定在 gapStartX
+        const cx1 = gapStartX - (groundLength / 2) * Math.cos(tiltAngle);
+        const cy1 = floorY + 25 - (groundLength / 2) * Math.sin(tiltAngle);
+        const g1 = Bodies.rectangle(cx1, cy1, groundLength, 50, tiltedGroundOpts);
 
-        
+        // (右邊地板 g2) 左側邊緣固定在 gapStartX + gapPx
+        const cx2 = gapStartX + gapPx + (groundLength / 2) * Math.cos(tiltAngle);
+        // 讓右邊地板的起始高度接續溝槽的傾斜落差，保持整體同一斜率
+        const g2StartY = floorY + 25 + gapPx * Math.tan(tiltAngle); 
+        const cy2 = g2StartY + (groundLength / 2) * Math.sin(tiltAngle);
+        const g2 = Bodies.rectangle(cx2, cy2, groundLength, 50, tiltedGroundOpts);
+
         const carGroup = Body.nextGroup(true);
         let rigidParts = [];
         let handleConfig = null;
