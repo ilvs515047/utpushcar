@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3. 物理越野測試場 (新增平地傾斜+全功能保留)</title>
+    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+多條動態捲尺)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
@@ -70,25 +70,34 @@
                 <input type="number" id="val_w" value="5">
             </div>
             <div class="input-group" style="flex:1;">
-                <label>⛰️ 地面傾斜角度 (°)</label>
-                <input type="number" id="val_slope" value="0" step="1" min="-45" max="45">
+                <label>滑動動摩擦係數</label>
+                <input type="number" id="val_floor_friction" value="0.3" step="0.1" min="0" max="2">
             </div>
         </div>
+
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>🏔️ 地面傾斜角度 (°)</label>
+                <input type="number" id="val_ground_angle" value="0" step="0.5" min="-30" max="30">
+            </div>
+        </div>
+
+
+
+
+
+
+        
         
         <div style="display: flex; gap: 10px;">
             <div class="input-group" style="flex:1;">
-                <label>滑動動摩擦係數</label>
-                <input type="number" id="val_floor_friction" value="0.3" step="0.1" min="0" max="2">
+                <label>💨 空氣阻力係數</label>
+                <input type="number" id="val_air_friction" value="0" step="0.001" min="0" max="0.1">
             </div>
             <div class="input-group" style="flex:1;">
                 <label>🏁 達標線距離 (cm)</label>
                 <input type="number" id="val_finish_dist" value="37.5" step="1" min="0">
             </div>
-        </div>
-        
-        <div class="input-group">
-            <label>💨 空氣阻力係數</label>
-            <input type="number" id="val_air_friction" value="0" step="0.001" min="0" max="0.1">
         </div>
 
         <div class="section-title">🕹️ 單次互動測試</div>
@@ -129,6 +138,7 @@
             <button id="btn_reset_pos" class="btn-warning" style="display:none; flex: 1;">🔄 重置位置</button>
         </div>
         
+        <!-- 💡 更新的量尺工具按鈕 -->
         <div style="display: flex; gap: 10px; margin-top: 5px;">
             <button id="btn_measure" class="btn-outline btn-measure" style="flex: 3;">📏 開啟滑鼠捲尺測量</button>
             <button id="btn_clear_measure" class="btn-outline btn-measure" style="flex: 1; display: none;" title="清除所有量測線">🗑️ 清除</button>
@@ -167,10 +177,9 @@
     let blueprint = null;
     const simScale = 4; 
 
-    // 新增載入 Vector 核心模組
     const Engine = Matter.Engine, Render = Matter.Render, Runner = Matter.Runner,
           Bodies = Matter.Bodies, Body = Matter.Body, Composite = Matter.Composite,
-          Constraint = Matter.Constraint, Events = Matter.Events, Vector = Matter.Vector;
+          Constraint = Matter.Constraint, Events = Matter.Events;
 
     let engine, render, runner, trolleyBody, handlePointLocal;
     let looseBodies = []; 
@@ -186,16 +195,14 @@
     let testQueue = [];
     let currentTestConfig = null;
     let autoTestTick = 0;
-    
-    // 全域跑道變數
     let finishLineX = 0;
     let failLineY = 0;
-    let groundPivot = { x: 0, y: 0 }; // 旋轉中心點
     let currentTotalMassVal = 0; 
 
+    // --- 📏 多條捲尺測量工具變數 ---
     let isMeasureMode = false;
     let isMeasuring = false;
-    let measurements = [];
+    let measurements = []; // 儲存所有的量測線
     let currentMeasureStart = { x: 0, y: 0 };
     let currentMeasureEnd = { x: 0, y: 0 };
 
@@ -215,12 +222,13 @@
         }
     });
 
-    btnClearMeasure.addEventListener('click', () => { measurements = []; });
+    btnClearMeasure.addEventListener('click', () => {
+        measurements = []; // 清空所有量測線
+    });
 
     function saveParams() {
         const params = {
             val_w: document.getElementById('val_w').value,
-            val_slope: document.getElementById('val_slope').value,
             val_floor_friction: document.getElementById('val_floor_friction').value,
             val_air_friction: document.getElementById('val_air_friction').value,
             val_finish_dist: document.getElementById('val_finish_dist').value,
@@ -247,7 +255,6 @@
             try {
                 const params = JSON.parse(event.target.result);
                 if(params.val_w !== undefined) document.getElementById('val_w').value = params.val_w;
-                if(params.val_slope !== undefined) document.getElementById('val_slope').value = params.val_slope;
                 if(params.val_floor_friction !== undefined) document.getElementById('val_floor_friction').value = params.val_floor_friction;
                 if(params.val_air_friction !== undefined) document.getElementById('val_air_friction').value = params.val_air_friction;
                 if(params.val_finish_dist !== undefined) document.getElementById('val_finish_dist').value = params.val_finish_dist;
@@ -296,6 +303,7 @@
         if(!simActive || isAutoTesting) return; 
         updateMouseWorld(e);
         
+        // 📏 如果處於量尺模式，攔截滑鼠事件作為測量用途
         if (isMeasureMode) {
             isMeasuring = true;
             currentMeasureStart = { x: mouseWorld.x, y: mouseWorld.y };
@@ -317,6 +325,7 @@
         isDraggingHandle = false; 
         if (isMeasuring) {
             isMeasuring = false;
+            // 如果拉動的距離大於 5px，則將這條線加入陣列保存 (避免單純點擊造成殘影)
             if (Math.hypot(currentMeasureEnd.x - currentMeasureStart.x, currentMeasureEnd.y - currentMeasureStart.y) > 5) {
                 measurements.push({
                     start: { x: currentMeasureStart.x, y: currentMeasureStart.y },
@@ -414,9 +423,6 @@
         btnResetPos.style.display = isAutoTesting ? 'none' : 'block';
 
         const gapCm = parseFloat(document.getElementById('val_w').value);
-        const slopeDeg = parseFloat(document.getElementById('val_slope').value) || 0;
-        const slopeRad = slopeDeg * Math.PI / 180; // 取得傾斜角(弧度)
-        
         const floorFriction = parseFloat(document.getElementById('val_floor_friction').value) || 0.3;
         const airFrictionVal = parseFloat(document.getElementById('val_air_friction').value) || 0;
         const simDir = parseInt(document.getElementById('val_direction').value) || 1;
@@ -438,26 +444,24 @@
         const gapStartX = 500; 
         const gapPx = gapCm * simScale;
         
-        // --- 跑道傾斜與旋轉邏輯 ---
-        groundPivot = { x: gapStartX, y: floorY + 25 }; 
         const startX = simDir === 1 ? gapStartX - 300 : gapStartX + gapPx + 300;
+        
         finishLineX = simDir === 1 ? gapStartX + gapPx + finishDistPx : gapStartX - finishDistPx; 
         failLineY = floorY + 60; 
 
         const groundOpts = { 
             isStatic: true, render: { fillStyle: '#95a5a6' }, 
-            friction: floorFriction, frictionStatic: floorFriction * 2.5, 
+            friction: floorFriction, 
+            frictionStatic: floorFriction * 2.5, 
             slop: 0.01, chamfer: { radius: 2 } 
         };
+        const groundAngleDeg = parseFloat(document.getElementById('val_ground_angle').value) || 0;
+        const groundAngleRad = groundAngleDeg * Math.PI / 180;
         const groundLength = 50000;
         const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, groundOpts);
         const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, groundOpts);
-        
-        // 套用整體跑道旋轉
-        if (slopeRad !== 0) {
-            Body.rotate(g1, slopeRad, groundPivot);
-            Body.rotate(g2, slopeRad, groundPivot);
-        }
+        Body.setAngle(g1, groundAngleRad);
+        Body.setAngle(g2, groundAngleRad);
 
         const carGroup = Body.nextGroup(true);
         let rigidParts = [];
@@ -466,15 +470,9 @@
         blueprint.parts.forEach(p => {
             const w_px = (p.w || 0) * simScale; const h_px = (p.h || 0) * simScale; const r_px = (p.r || 0) * simScale;
             
-            // 基礎未旋轉的座標
-            const unrotatedWorldX = startX + (p.x * simScale); 
-            const unrotatedWorldY = floorY - 150 + (p.y * simScale); 
-            
-            // 將車輛生成點依據地面斜率進行旋轉
-            const rotatedPos = Vector.rotateAbout({ x: unrotatedWorldX, y: unrotatedWorldY }, slopeRad, groundPivot);
-            const worldX = rotatedPos.x;
-            const worldY = rotatedPos.y;
-            const angleRad = (p.angle || 0) * Math.PI / 180 + slopeRad; // 疊加坡度旋轉
+            const worldX = startX + (p.x * simScale); 
+            const worldY = floorY - 150 + (p.y * simScale); 
+            const angleRad = (p.angle || 0) * Math.PI / 180;
 
             if (p.type === 'handle') { handleConfig = { x: worldX, y: worldY }; return; }
 
@@ -483,11 +481,17 @@
 
             if (p.type === 'rect') {
                 const partFric = p.friction !== undefined ? p.friction : 0.1;
+
                 const rectBody = Bodies.rectangle(worldX, worldY, w_px, h_px, { 
-                    render: { fillStyle: p.color }, density: computedDensity, angle: angleRad, 
+                    render: { fillStyle: p.color }, 
+                    density: computedDensity, 
+                    angle: angleRad, 
                     collisionFilter: p.isLoose ? {} : { group: carGroup },
-                    frictionAir: airFrictionVal, friction: partFric, frictionStatic: partFric * 50,  
-                    restitution: 0, slop: 0.05                    
+                    frictionAir: airFrictionVal,
+                    friction: partFric,             
+                    frictionStatic: partFric * 50,  
+                    restitution: 0,                 
+                    slop: 0.05                      
                 });
                 rectBody.customData = p; 
                 if (p.isLoose) looseBodies.push(rectBody); else rigidParts.push(rectBody);
@@ -495,9 +499,14 @@
             else if (p.type === 'wheel') {
                 const isSoft = p.tireType === 'soft';
                 const wheelBody = Bodies.circle(worldX, worldY, r_px, { 
-                    collisionFilter: { group: carGroup }, friction: isSoft ? 0.6 : 0.05, 
-                    frictionStatic: isSoft ? 1.5 : 0.3, frictionAir: airFrictionVal, 
-                    density: computedDensity, slop: 0, restitution: 0, render: { fillStyle: p.color }
+                    collisionFilter: { group: carGroup }, 
+                    friction: isSoft ? 0.6 : 0.05, 
+                    frictionStatic: isSoft ? 1.5 : 0.3, 
+                    frictionAir: airFrictionVal, 
+                    density: computedDensity,
+                    slop: 0,
+                    restitution: 0,
+                    render: { fillStyle: p.color }
                 });
                 wheelBody.customData = p; 
                 rigidParts.push(wheelBody);
@@ -507,11 +516,8 @@
 
         trolleyBody = Body.create({ parts: rigidParts, collisionFilter: { group: carGroup }, friction: 0.001, frictionAir: airFrictionVal });
 
-        if(handleConfig) {
-            // 計算把手相對於台車的本地精確座標
-            const offset = Vector.sub(handleConfig, trolleyBody.position);
-            handlePointLocal = Vector.rotate(offset, -trolleyBody.angle);
-        } else handlePointLocal = { x: 0, y: 0 };
+        if(handleConfig) handlePointLocal = { x: handleConfig.x - trolleyBody.position.x, y: handleConfig.y - trolleyBody.position.y }; 
+        else handlePointLocal = { x: 0, y: 0 };
 
         const kgfToMatter = parseFloat(document.getElementById('val_force_coeff').value) || 0.0005;
         const kP = parseFloat(document.getElementById('val_kP').value) || 0.08;
@@ -531,23 +537,21 @@
                 }
             }
 
-            const hWorld = Body.toWorld(trolleyBody, handlePointLocal);
+            const cosA = Math.cos(trolleyBody.angle); const sinA = Math.sin(trolleyBody.angle);
+            const hWorld = { 
+                x: trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA), 
+                y: trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA) 
+            };
             
-            // 計算「沿著斜坡方向」的實際速度
-            const velocityAlongSlope = trolleyBody.velocity.x * Math.cos(slopeRad) + trolleyBody.velocity.y * Math.sin(slopeRad);
-            actualSpeedCmS = (velocityAlongSlope * 60) / simScale * simDir;
+            actualSpeedCmS = (trolleyBody.velocity.x * 60) / simScale * simDir;
 
+            // ⚠️ 當處於量尺模式時，為了防止干擾測量，手動拉力無效化
             if (mode === 'auto') {
                 const speedError = targetSpeedCmS - actualSpeedCmS;
                 let forceFraction = Math.max(0, Math.min(1, speedError * kP));
                 const appliedForce = maxForceKgf * forceFraction * kgfToMatter * simDir;
-                
                 if (Math.abs(speedError) > 0.5) {
-                    // 推力沿著斜坡角度施加
-                    Body.applyForce(trolleyBody, hWorld, { 
-                        x: appliedForce * Math.cos(slopeRad), 
-                        y: appliedForce * Math.sin(slopeRad) 
-                    });
+                    Body.applyForce(trolleyBody, hWorld, { x: appliedForce, y: 0 });
                 }
                 currentForceKgf = maxForceKgf * forceFraction;
             } else if (mode === 'manual' && isDraggingHandle && !isMeasureMode) {
@@ -564,15 +568,13 @@
                 let statusMsg = null;
                 let statusClass = "";
 
-                // 將當前座標逆旋轉回水平狀態，以進行原汁原味的 X 軸越野判定
-                const unrotatedPos = Vector.rotateAbout(trolleyBody.position, -slopeRad, groundPivot);
-                const isPassed = simDir === 1 ? (unrotatedPos.x > finishLineX) : (unrotatedPos.x < finishLineX);
+                const isPassed = simDir === 1 ? (trolleyBody.position.x > finishLineX) : (trolleyBody.position.x < finishLineX);
 
                 if (isPassed) {
                     statusMsg = "✅ 成功越過"; statusClass = "log-pass";
-                } else if (unrotatedPos.y > failLineY) {
+                } else if (trolleyBody.position.y > failLineY) {
                     statusMsg = "❌ 掉入溝槽"; statusClass = "log-fail";
-                } else if (Math.abs(trolleyBody.angle - slopeRad) > 1.22) { // 將坡度作為基準參考
+                } else if (Math.abs(trolleyBody.angle) > 1.22) { 
                     statusMsg = "❌ 翻車傾覆"; statusClass = "log-fail";
                 } else if (autoTestTick > 60 * 12) { 
                     statusMsg = "⚠️ 卡住超時"; statusClass = "log-stuck";
@@ -595,7 +597,7 @@
                     
                     logItem.innerHTML = `
                         <div style="display:flex; flex-direction:column; gap:3px;">
-                            <span style="color:#bdc3c7;">[${dirStr}] 坡:${slopeDeg}° | 溝:<b>${gapCm}</b>cm | 達標:<b>${finishDistCm}</b>cm | 摩:<b>${floorFriction}</b></span>
+                            <span style="color:#bdc3c7;">[${dirStr}] 溝槽: <b>${gapCm}</b>cm | 達標: <b>${finishDistCm}</b>cm | 摩擦: <b>${floorFriction}</b> | 空阻: <b>${airFrictionVal}</b></span>
                             <span style="color:#bdc3c7;">總重: <b>${currentTotalMassVal.toFixed(1)}</b>kg | 輪胎: <b>${tireTypeStr}</b>(R=<b>${tireRadiusStr}</b>)</span>
                             <span style="color:#bdc3c7;">推力: <b>${maxForceKgf}</b>kgf | 速: <b>${targetSpeedCmS}</b>cm/s</span>
                         </div>
@@ -609,25 +611,29 @@
             }
         });
 
+        // 獨立出繪製量測線的功能
         function drawMeasureTape(ctx, start, end) {
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            ctx.strokeStyle = '#9b59b6';
+            ctx.strokeStyle = '#9b59b6'; // 紫色測量線
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 5]);
             ctx.stroke();
             ctx.setLineDash([]);
 
+            // 畫起始與終點的小圓點
             ctx.beginPath();
             ctx.arc(start.x, start.y, 4, 0, Math.PI*2);
             ctx.arc(end.x, end.y, 4, 0, Math.PI*2);
             ctx.fillStyle = '#9b59b6';
             ctx.fill();
 
+            // 計算距離 (cm)
             let distPx = Math.hypot(end.x - start.x, end.y - start.y);
             let distCm = distPx / simScale;
             
+            // 畫在線段中間的文字
             let midX = (start.x + end.x) / 2;
             let midY = (start.y + end.y) / 2;
             let text = `${distCm.toFixed(1)} cm`;
@@ -635,10 +641,12 @@
             ctx.font = 'bold 14px sans-serif';
             let textWidth = ctx.measureText(text).width;
             
+            // 文字背景
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(midX - textWidth/2 - 6, midY - 12 - 8, textWidth + 12, 24);
             
-            ctx.fillStyle = '#f1c40f'; 
+            // 文字
+            ctx.fillStyle = '#f1c40f'; // 黃色字體更醒目
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(text, midX, midY - 10);
@@ -657,33 +665,36 @@
             });
 
             const systemCG = { x: totalMassX / totalSystemMass, y: totalMassY / totalSystemMass };
-            const hWorld = Body.toWorld(trolleyBody, handlePointLocal);
+
+            const cosA = Math.cos(trolleyBody.angle); const sinA = Math.sin(trolleyBody.angle);
+            const hWorld = { 
+                x: trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA), 
+                y: trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA) 
+            };
             
             ctx.save();
             ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
 
-            // 繪製捲尺
+            // ==========================================
+            // 📏 繪製所有的捲尺測量線
+            // ==========================================
             measurements.forEach(m => drawMeasureTape(ctx, m.start, m.end));
-            if (isMeasuring) drawMeasureTape(ctx, currentMeasureStart, currentMeasureEnd);
+            
+            // 如果正在拉拽，即時畫出目前這一條
+            if (isMeasuring) {
+                drawMeasureTape(ctx, currentMeasureStart, currentMeasureEnd);
+            }
+            // ==========================================
 
             ctx.beginPath(); ctx.moveTo(systemCG.x, systemCG.y); ctx.lineTo(systemCG.x, floorY + 100); 
             ctx.strokeStyle = '#e74c3c'; ctx.lineWidth=2; ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
             ctx.beginPath(); ctx.arc(systemCG.x, systemCG.y, 8, 0, Math.PI*2); 
             ctx.fillStyle = '#f1c40f'; ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
 
-            // 隨坡度傾斜旋轉繪製達標線
-            const flTop = Vector.rotateAbout({ x: finishLineX, y: floorY - 200 }, slopeRad, groundPivot);
-            const flBottom = Vector.rotateAbout({ x: finishLineX, y: floorY + 50 }, slopeRad, groundPivot);
-            ctx.beginPath(); ctx.moveTo(flTop.x, flTop.y); ctx.lineTo(flBottom.x, flBottom.y);
+            ctx.beginPath(); ctx.moveTo(finishLineX, floorY - 200); ctx.lineTo(finishLineX, floorY + 50);
             ctx.strokeStyle = '#2ecc71'; ctx.lineWidth=2; ctx.setLineDash([10,10]); ctx.stroke(); ctx.setLineDash([]);
-            
             ctx.fillStyle = '#2ecc71'; ctx.font = '12px sans-serif'; 
-            const flTextLoc = Vector.rotateAbout({ x: simDir === 1 ? finishLineX + 5 : finishLineX - 60, y: floorY - 180 }, slopeRad, groundPivot);
-            ctx.save();
-            ctx.translate(flTextLoc.x, flTextLoc.y);
-            ctx.rotate(slopeRad);
-            ctx.fillText('✅ 達標線', 0, 0);
-            ctx.restore();
+            ctx.fillText('✅ 達標線', simDir === 1 ? finishLineX + 5 : finishLineX - 60, floorY - 180);
 
             const drawPartInfo = (body) => {
                 if (!body.customData) return;
@@ -701,18 +712,32 @@
                     labelY = py + (p.r * simScale) + 30;
                 }
 
-                ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(labelX, labelY + 2);
-                ctx.strokeStyle = 'rgba(52, 152, 219, 0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(labelX, labelY + 2);
+                ctx.strokeStyle = 'rgba(52, 152, 219, 0.7)'; 
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([3, 3]); 
+                ctx.stroke();
+                ctx.setLineDash([]);
 
                 const textStr = `${p.name} (${p.mass}kg)`;
                 ctx.font = 'bold 13px "MingLiU", "PMingLiU", "細明體", serif';
-                ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-                ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; ctx.strokeText(textStr, labelX, labelY);
-                ctx.fillStyle = '#0984e3'; ctx.fillText(textStr, labelX, labelY);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.strokeText(textStr, labelX, labelY);
+
+                ctx.fillStyle = '#0984e3'; 
+                ctx.fillText(textStr, labelX, labelY);
             };
 
             if (trolleyBody && trolleyBody.parts) {
-                for (let i = 1; i < trolleyBody.parts.length; i++) drawPartInfo(trolleyBody.parts[i]);
+                for (let i = 1; i < trolleyBody.parts.length; i++) {
+                    drawPartInfo(trolleyBody.parts[i]);
+                }
             }
             looseBodies.forEach(drawPartInfo);
 
@@ -732,7 +757,7 @@
             let deg = (trolleyBody.angle * 180 / Math.PI) % 360;
             if (deg > 180) deg -= 360; if (deg < -180) deg += 360;
             
-            ctx.fillText(`📐 車體傾斜: ${Math.abs(deg).toFixed(1)}° (坡度 ${slopeDeg}°)`, 35, 45);
+            ctx.fillText(`📐 傾斜角度: ${Math.abs(deg).toFixed(1)}°`, 35, 45);
             ctx.fillStyle = currentForceKgf > 0 ? '#e74c3c' : '#bdc3c7';
             ctx.fillText(`💪 即時推力: ${currentForceKgf.toFixed(1)} kgf`, 35, 70);
             
@@ -744,6 +769,7 @@
                              (mode === 'manual' ? (isDraggingHandle && !isMeasureMode ? '手動推行中' : '等待操作') : 
                              (currentForceKgf > 0 ? '自動運行 (加速)' : '自動運行 (定速)'));
             
+            // 提示測量狀態
             if (isMeasureMode) statusText = "📏 捲尺測量模式";
             
             ctx.fillText(`狀態：${statusText}`, 35, 115);
@@ -752,10 +778,9 @@
         Events.on(render, 'beforeRender', () => {
             if (trolleyBody && !isNaN(trolleyBody.position.x)) {
                 const halfWidth = render.options.width / 2;
-                // [更新] 相機現可靈活跟隨車輛爬坡下坡的垂直移動 (Y軸)
                 Render.lookAt(render, { 
-                    min: { x: trolleyBody.position.x - halfWidth, y: trolleyBody.position.y - render.options.height * 0.6 }, 
-                    max: { x: trolleyBody.position.x + halfWidth, y: trolleyBody.position.y + render.options.height * 0.4 } 
+                    min: { x: trolleyBody.position.x - halfWidth, y: 0 }, 
+                    max: { x: trolleyBody.position.x + halfWidth, y: render.options.height } 
                 });
             }
         });
