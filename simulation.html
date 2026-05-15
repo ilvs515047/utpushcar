@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+多條動態捲尺)</title>
+    <title>2. 物理越野測試場 (雙向+真實摩擦+空阻+參數存取版+多條動態捲尺+地形坡度)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
@@ -77,12 +77,19 @@
         
         <div style="display: flex; gap: 10px;">
             <div class="input-group" style="flex:1;">
-                <label>💨 空氣阻力係數</label>
-                <input type="number" id="val_air_friction" value="0" step="0.001" min="0" max="0.1">
+                <label>📐 地面坡度 (度)</label>
+                <input type="number" id="val_tilt" value="5" step="1" max="45" min="-45">
             </div>
             <div class="input-group" style="flex:1;">
                 <label>🏁 達標線距離 (cm)</label>
                 <input type="number" id="val_finish_dist" value="37.5" step="1" min="0">
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>💨 空氣阻力係數</label>
+                <input type="number" id="val_air_friction" value="0" step="0.001" min="0" max="0.1">
             </div>
         </div>
 
@@ -214,6 +221,7 @@
 
     function saveParams() {
         const params = {
+            val_tilt: document.getElementById('val_tilt').value,
             val_w: document.getElementById('val_w').value,
             val_floor_friction: document.getElementById('val_floor_friction').value,
             val_air_friction: document.getElementById('val_air_friction').value,
@@ -240,6 +248,7 @@
         reader.onload = function(event) {
             try {
                 const params = JSON.parse(event.target.result);
+                if(params.val_tilt !== undefined) document.getElementById('val_tilt').value = params.val_tilt;
                 if(params.val_w !== undefined) document.getElementById('val_w').value = params.val_w;
                 if(params.val_floor_friction !== undefined) document.getElementById('val_floor_friction').value = params.val_floor_friction;
                 if(params.val_air_friction !== undefined) document.getElementById('val_air_friction').value = params.val_air_friction;
@@ -442,8 +451,21 @@
             slop: 0.01, chamfer: { radius: 2 } 
         };
         const groundLength = 50000;
-        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, groundOpts);
-        const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, groundOpts);
+
+        // 💡 抓取 UI 上輸入的坡度值 (若為空則預設為 0)
+        const tiltAngleDeg = parseFloat(document.getElementById('val_tilt').value) || 0; 
+        const tiltAngle = tiltAngleDeg * Math.PI / 180; // 轉為弧度
+
+        const tiltedGroundOpts = { ...groundOpts, angle: tiltAngle };
+
+        const cx1 = gapStartX - (groundLength / 2) * Math.cos(tiltAngle);
+        const cy1 = floorY + 25 - (groundLength / 2) * Math.sin(tiltAngle);
+        const g1 = Bodies.rectangle(cx1, cy1, groundLength, 50, tiltedGroundOpts);
+
+        const cx2 = gapStartX + gapPx + (groundLength / 2) * Math.cos(tiltAngle);
+        const g2StartY = floorY + 25 + gapPx * Math.tan(tiltAngle); 
+        const cy2 = g2StartY + (groundLength / 2) * Math.sin(tiltAngle);
+        const g2 = Bodies.rectangle(cx2, cy2, groundLength, 50, tiltedGroundOpts);
 
         const carGroup = Body.nextGroup(true);
         let rigidParts = [];
