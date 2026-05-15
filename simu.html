@@ -435,6 +435,8 @@
         let mode = isAutoTesting ? 'auto' : document.getElementById('val_mode').value;
 
         engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
+        engine.gravity.x = Math.sin(groundAngleRad);
+        engine.gravity.y = Math.cos(groundAngleRad);
         render = Render.create({ 
             element: workspace, engine: engine, 
             options: { width: workspace.clientWidth, height: workspace.clientHeight, wireframes: false, background: '#ecf0f1', hasBounds: true } 
@@ -458,26 +460,8 @@
         const groundAngleDeg = parseFloat(document.getElementById('val_ground_angle').value) || 0;
         const groundAngleRad = groundAngleDeg * Math.PI / 180;
         const groundLength = 50000;
-
-        // 以溝槽邊緣為旋轉支點，計算地板中心偏移
-        const g1CenterX = gapStartX - groundLength/2;
-        const g1CenterY = floorY + 25;
-        const g1OffsetX = (gapStartX - g1CenterX) * (1 - Math.cos(groundAngleRad));
-        const g1OffsetY = (gapStartX - g1CenterX) * Math.sin(groundAngleRad);
-
-        const g2CenterX = gapStartX + gapPx + groundLength/2;
-        const g2CenterY = floorY + 25;
-        const g2OffsetX = (gapStartX + gapPx - g2CenterX) * (1 - Math.cos(groundAngleRad));
-        const g2OffsetY = (gapStartX + gapPx - g2CenterX) * Math.sin(groundAngleRad);
-
-        const g1 = Bodies.rectangle(
-            g1CenterX + g1OffsetX, g1CenterY + g1OffsetY,
-            groundLength, 50, { ...groundOpts, angle: groundAngleRad }
-        );
-        const g2 = Bodies.rectangle(
-            g2CenterX + g2OffsetX, g2CenterY + g2OffsetY,
-            groundLength, 50, { ...groundOpts, angle: groundAngleRad }
-        );
+        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, groundOpts);
+        const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, groundOpts);
         Body.setAngle(g1, groundAngleRad);
         Body.setAngle(g2, groundAngleRad);
 
