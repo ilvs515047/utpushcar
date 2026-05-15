@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3. 物理越野測試場 (坡道傾斜版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body { font-family: "Songti TC", serif; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
+        .sidebar { width: 340px; background: #34495e; padding: 25px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; box-shadow: 2px 0 10px rgba(0,0,0,0.3); z-index: 10; overflow-y: auto; max-height: 100%;}
+        h2 { border-bottom: 2px dashed #7f8c8d; padding-bottom: 10px; margin-top: 0; color: #f1c40f; font-size: 18px;}
+        .section-title { font-size: 14px; font-weight: bold; color: #bdc3c7; border-left: 4px solid #3498db; padding-left: 8px; margin-top: 10px; }
+        .input-group { display: flex; flex-direction: column; gap: 4px; font-size: 13px;}
+        input, select { padding: 6px; border: none; border-radius: 4px; background: #ecf0f1; color: #2c3e50; font-family: inherit; font-size: 13px;}
+        button { padding: 10px; background: #e74c3c; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 5px; font-size: 14px; transition: 0.2s;}
+        button:hover { background: #c0392b; filter: brightness(1.1); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-warning { background: #f39c12; } .btn-warning:hover { background: #e67e22; }
+        .btn-success { background: #2ecc71; color: #2c3e50; } .btn-success:hover { background: #27ae60; }
+        .btn-danger { background: #e74c3c; color: white; } .btn-danger:hover { background: #c0392b; }
+        .btn-outline { background: transparent; border: 1px solid #bdc3c7; color: #ecf0f1; padding: 6px; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-outline:hover { background: rgba(189, 195, 199, 0.2); }
+        .btn-measure { border-color: #9b59b6; color: #9b59b6; font-size: 14px;}
+        .btn-measure:hover { background: rgba(155, 89, 182, 0.2); }
+        .btn-measure.active { background: rgba(155, 89, 182, 0.4); color: #fff; border-color: #fff;}
+        
+        #workspace { flex: 1; background: #ecf0f1; border-radius: 8px; overflow: hidden; position: relative; box-shadow: inset 0 0 20px rgba(0,0,0,0.1); cursor: crosshair;}
+        #info { font-size: 13px; color: #bdc3c7; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px; line-height: 1.4; }
+        
+        #results_log { 
+            background: #1a252f; 
+            padding: 10px; 
+            border-radius: 6px; 
+            font-size: 12px; 
+            overflow-y: auto; 
+            height: 250px; 
+            min-height: 150px; 
+            resize: vertical; 
+            display: none; 
+            flex-direction: column; 
+            gap: 5px; 
+            border: 1px solid #7f8c8d;
+        }
+        .log-item { display: flex; justify-content: space-between; border-bottom: 1px dashed #34495e; padding-bottom: 6px; padding-top: 4px;}
+        .log-pass { color: #2ecc71; font-weight: bold;}
+        .log-fail { color: #e74c3c; font-weight: bold;}
+        .log-stuck { color: #f1c40f; font-weight: bold;}
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>🧪 動態幾何物理測試場</h2>
+        
+        <div class="input-group">
+            <label>📂 1. 載入實體藍圖 (.json)</label>
+            <input type="file" id="blueprintUpload" accept=".json">
+        </div>
+        <div id="info">尚未載入藍圖...</div>
+
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button class="btn-outline" onclick="document.getElementById('paramUpload').click()" style="flex:1;">📂 載入參數</button>
+            <button class="btn-outline" onclick="saveParams()" style="flex:1;">💾 儲存參數</button>
+            <input type="file" id="paramUpload" accept=".json" style="display:none;">
+        </div>
+        
+        <div class="section-title">⚙️ 環境與判定設定</div>
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>📐 溝槽寬度 (cm)</label>
+                <input type="number" id="val_w" value="5">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>⛰️ 地面傾斜 (deg)</label>
+                <input type="number" id="val_slope" value="0" step="1" min="-45" max="45">
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>滑動動摩擦係數</label>
+                <input type="number" id="val_floor_friction" value="0.3" step="0.1" min="0" max="2">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>🏁 達標距離 (cm)</label>
+                <input type="number" id="val_finish_dist" value="37.5" step="1" min="0">
+            </div>
+        </div>
+
+        <div class="section-title">🕹️ 單次互動測試</div>
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1.2;">
+                <label>🔄 推行方向</label>
+                <select id="val_direction">
+                    <option value="1">➡️ 左至右</option>
+                    <option value="-1">⬅️ 右至左</option>
+                </select>
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>💨 空氣阻力</label>
+                <input type="number" id="val_air_friction" value="0" step="0.001" min="0">
+            </div>
+        </div>
+        <div class="input-group">
+            <select id="val_mode">
+                <option value="auto">⚙️ 自動定速推行</option>
+                <option value="manual">✋ 手動拉拽把手</option>
+            </select>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <div class="input-group" style="flex:1;">
+                <label>推力(kgf)</label>
+                <input type="number" id="val_f" value="15">
+            </div>
+            <div class="input-group" style="flex:1;">
+                <label>速度(cm/s)</label>
+                <input type="number" id="val_speed" value="30">
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button id="btn_sim" disabled style="flex: 1;">▶️ 開始驗證</button>
+            <button id="btn_reset_pos" class="btn-warning" style="display:none; flex: 1;">🔄 重置</button>
+        </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 5px;">
+            <button id="btn_measure" class="btn-outline btn-measure" style="flex: 3;">📏 捲尺測量</button>
+            <button id="btn_clear_measure" class="btn-outline btn-measure" style="flex: 1; display: none;">🗑️</button>
+        </div>
+
+        <div class="section-title">🤖 批次條件探索</div>
+        <div class="input-group">
+            <label>測試推力陣列</label>
+            <input type="text" id="auto_forces" value="5, 10, 15, 20">
+        </div>
+        <button id="btn_auto_test" class="btn-success" disabled>🚀 開始自動掃描</button>
+        
+        <div id="results_log">
+            <div style="text-align: center; font-weight: bold; margin-bottom: 5px; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 5px;">📊 測試報告</div>
+        </div>
+    </div>
+
+    <div id="workspace"></div>
+
+<script>
+    const blueprintUpload = document.getElementById('blueprintUpload');
+    const paramUpload = document.getElementById('paramUpload');
+    const btnSim = document.getElementById('btn_sim');
+    const btnResetPos = document.getElementById('btn_reset_pos');
+    const btnAutoTest = document.getElementById('btn_auto_test');
+    const btnMeasure = document.getElementById('btn_measure');
+    const btnClearMeasure = document.getElementById('btn_clear_measure');
+    const infoBox = document.getElementById('info');
+    const workspace = document.getElementById('workspace');
+    const resultsLog = document.getElementById('results_log');
+
+    let blueprint = null;
+    const simScale = 4; 
+
+    const Engine = Matter.Engine, Render = Matter.Render, Runner = Matter.Runner,
+          Bodies = Matter.Bodies, Body = Matter.Body, Composite = Matter.Composite,
+          Constraint = Matter.Constraint, Events = Matter.Events, Vector = Matter.Vector;
+
+    let engine, render, runner, trolleyBody, handlePointLocal;
+    let looseBodies = []; 
+    let wheelsList = []; 
+    let simActive = false;
+
+    let mouseWorld = { x: 0, y: 0 };
+    let isDraggingHandle = false;
+    let currentForceKgf = 0;
+    let actualSpeedCmS = 0;
+
+    let isAutoTesting = false;
+    let testQueue = [];
+    let currentTestConfig = null;
+    let autoTestTick = 0;
+    let finishLineX = 0;
+    let failLineY = 0;
+    let currentTotalMassVal = 0; 
+
+    let isMeasureMode = false;
+    let isMeasuring = false;
+    let measurements = [];
+    let currentMeasureStart = { x: 0, y: 0 };
+    let currentMeasureEnd = { x: 0, y: 0 };
+
+    btnMeasure.addEventListener('click', () => {
+        isMeasureMode = !isMeasureMode;
+        btnMeasure.classList.toggle('active', isMeasureMode);
+        btnMeasure.innerText = isMeasureMode ? "📏 捲尺測量中..." : "📏 捲尺測量";
+        btnClearMeasure.style.display = isMeasureMode ? "block" : "none";
+    });
+
+    btnClearMeasure.addEventListener('click', () => measurements = []);
+
+    function saveParams() {
+        const params = {
+            val_w: document.getElementById('val_w').value,
+            val_slope: document.getElementById('val_slope').value,
+            val_floor_friction: document.getElementById('val_floor_friction').value,
+            val_air_friction: document.getElementById('val_air_friction').value,
+            val_finish_dist: document.getElementById('val_finish_dist').value,
+            val_direction: document.getElementById('val_direction').value,
+            val_mode: document.getElementById('val_mode').value,
+            val_f: document.getElementById('val_f').value,
+            val_speed: document.getElementById('val_speed').value,
+            auto_forces: document.getElementById('auto_forces').value
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(params, null, 2));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href", dataStr);
+        dlAnchorElem.setAttribute("download", "trolley_test_params.json");
+        dlAnchorElem.click();
+    }
+
+    paramUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const p = JSON.parse(event.target.result);
+                Object.keys(p).forEach(k => { if(document.getElementById(k)) document.getElementById(k).value = p[k]; });
+                alert("✅ 參數載入成功！");
+            } catch (err) { alert("❌ 格式錯誤"); }
+        };
+        reader.readAsText(file);
+    });
+
+    blueprintUpload.addEventListener('change', function(e) {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                blueprint = JSON.parse(event.target.result);
+                if(blueprint.version.startsWith("3")) {
+                    currentTotalMassVal = blueprint.parts.reduce((sum, p) => sum + p.mass, 0);
+                    infoBox.innerHTML = `✅ 載入成功！零件: ${blueprint.parts.length} | 總重: ${currentTotalMassVal.toFixed(1)}kg`;
+                    btnSim.disabled = btnAutoTest.disabled = false;
+                } else { alert("版本不符"); }
+            } catch (err) { alert("讀取失敗"); }
+        };
+        reader.readAsText(file);
+    });
+
+    function updateMouseWorld(e) {
+        if (!render) return;
+        const rect = render.canvas.getBoundingClientRect();
+        const scaleX = (render.bounds.max.x - render.bounds.min.x) / rect.width;
+        const scaleY = (render.bounds.max.y - render.bounds.min.y) / rect.height;
+        mouseWorld.x = render.bounds.min.x + (e.clientX - rect.left) * scaleX;
+        mouseWorld.y = render.bounds.min.y + (e.clientY - rect.top) * scaleY;
+    }
+
+    workspace.addEventListener('mousedown', (e) => {
+        if(!simActive || isAutoTesting) return;
+        updateMouseWorld(e);
+        if (isMeasureMode) {
+            isMeasuring = true;
+            currentMeasureStart = { ...mouseWorld };
+            currentMeasureEnd = { ...mouseWorld };
+            return;
+        }
+        if (document.getElementById('val_mode').value === 'manual' && trolleyBody) {
+            const cosA = Math.cos(trolleyBody.angle), sinA = Math.sin(trolleyBody.angle);
+            const hx = trolleyBody.position.x + (handlePointLocal.x * cosA - handlePointLocal.y * sinA);
+            const hy = trolleyBody.position.y + (handlePointLocal.x * sinA + handlePointLocal.y * cosA);
+            if (Math.hypot(mouseWorld.x - hx, mouseWorld.y - hy) < 50) isDraggingHandle = true;
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isMeasuring && Math.hypot(currentMeasureEnd.x-currentMeasureStart.x, currentMeasureEnd.y-currentMeasureStart.y) > 5) {
+            measurements.push({ start: {...currentMeasureStart}, end: {...currentMeasureEnd} });
+        }
+        isMeasuring = isDraggingHandle = false;
+    });
+
+    workspace.addEventListener('mousemove', (e) => {
+        if(simActive) updateMouseWorld(e);
+        if (isMeasuring) currentMeasureEnd = { ...mouseWorld };
+    });
+
+    function initSimulation() {
+        if (!blueprint) return;
+        if (render) { Render.stop(render); render.canvas.remove(); Runner.stop(runner); Engine.clear(engine); }
+        
+        simActive = true;
+        isDraggingHandle = false;
+        looseBodies = []; wheelsList = []; autoTestTick = 0;
+        btnResetPos.style.display = isAutoTesting ? 'none' : 'block';
+
+        const gapCm = parseFloat(document.getElementById('val_w').value);
+        const slopeDeg = parseFloat(document.getElementById('val_slope').value) || 0;
+        const slopeRad = slopeDeg * Math.PI / 180;
+        const floorFriction = parseFloat(document.getElementById('val_floor_friction').value) || 0.3;
+        const airFrictionVal = parseFloat(document.getElementById('val_air_friction').value) || 0;
+        const simDir = parseInt(document.getElementById('val_direction').value) || 1;
+        const finishDistPx = (parseFloat(document.getElementById('val_finish_dist').value) || 37.5) * simScale;
+        
+        const kgfToMatter = 0.0005;
+        let maxForceKgf = isAutoTesting ? currentTestConfig.force : parseFloat(document.getElementById('val_f').value);
+        let targetSpeedCmS = parseFloat(document.getElementById('val_speed').value);
+
+        engine = Engine.create({ positionIterations: 16 });
+        render = Render.create({ 
+            element: workspace, engine: engine, 
+            options: { width: workspace.clientWidth, height: workspace.clientHeight, wireframes: false, background: '#ecf0f1', hasBounds: true } 
+        });
+
+        const floorY = workspace.clientHeight - 150;
+        const gapStartX = 600;
+        const gapPx = gapCm * simScale;
+        
+        // --- ⛰️ 坡道生成邏輯 ---
+        const groundLength = 5000;
+        const g1 = Bodies.rectangle(0, 0, groundLength, 60, { 
+            isStatic: true, friction: floorFriction, render: { fillStyle: '#95a5a6' }, angle: slopeRad 
+        });
+        const g2 = Bodies.rectangle(0, 0, groundLength, 60, { 
+            isStatic: true, friction: floorFriction, render: { fillStyle: '#95a5a6' }, angle: slopeRad 
+        });
+
+        // 定位：讓 g1 的右邊緣和 g2 的左邊緣夾住溝槽，且符合坡度
+        const cosS = Math.cos(slopeRad), sinS = Math.sin(slopeRad);
+        Body.setPosition(g1, { 
+            x: gapStartX - (groundLength/2) * cosS, 
+            y: floorY - (groundLength/2) * sinS 
+        });
+        Body.setPosition(g2, { 
+            x: gapStartX + gapPx * cosS + (groundLength/2) * cosS, 
+            y: floorY + gapPx * sinS + (groundLength/2) * sinS 
+        });
+
+        // 達標線位置
+        finishLineX = gapStartX + (gapPx + finishDistPx) * cosS;
+        failLineY = floorY + 150;
+
+        // --- 🛒 車輛生成 ---
+        const startXRel = simDir === 1 ? -300 : gapPx + 300;
+        const carGroup = Body.nextGroup(true);
+        let rigidParts = [];
+        let handleConfig = null;
+
+        blueprint.parts.forEach(p => {
+            const w_px = (p.w || 0) * simScale, h_px = (p.h || 0) * simScale, r_px = (p.r || 0) * simScale;
+            // 旋轉變換座標
+            const px = p.x * simScale, py = p.y * simScale;
+            const worldX = gapStartX + (startXRel + px) * cosS - (py - 100) * sinS;
+            const worldY = floorY + (startXRel + px) * sinS + (py - 100) * cosS;
+            const angleRad = (p.angle || 0) * Math.PI / 180 + slopeRad;
+
+            if (p.type === 'handle') { handleConfig = { x: worldX, y: worldY }; return; }
+
+            const common = { 
+                density: p.mass / (p.type === 'rect' ? w_px*h_px : Math.PI*r_px*r_px),
+                friction: p.friction || 0.1, frictionAir: airFrictionVal, restitution: 0,
+                collisionFilter: p.isLoose ? {} : { group: carGroup }, render: { fillStyle: p.color }
+            };
+
+            let b;
+            if (p.type === 'rect') b = Bodies.rectangle(worldX, worldY, w_px, h_px, { ...common, angle: angleRad });
+            else {
+                b = Bodies.circle(worldX, worldY, r_px, { ...common, friction: p.tireType==='soft'?0.8:0.1 });
+                wheelsList.push(b);
+            }
+            b.customData = p;
+            if (p.isLoose) looseBodies.push(b); else rigidParts.push(b);
+        });
+
+        trolleyBody = Body.create({ parts: rigidParts, collisionFilter: { group: carGroup } });
+        if(handleConfig) handlePointLocal = Vector.rotate(Vector.sub(handleConfig, trolleyBody.position), -trolleyBody.angle);
+        else handlePointLocal = { x: 0, y: 0 };
+
+        Composite.add(engine.world, [g1, g2, trolleyBody, ...looseBodies]);
+
+        Events.on(engine, 'beforeUpdate', () => {
+            if (!simActive || !trolleyBody) return;
+            actualSpeedCmS = (trolleyBody.speed * 60) / simScale * (Vector.dot(trolleyBody.velocity, {x:cosS, y:sinS}) >= 0 ? 1 : -1);
+
+            const hWorld = Body.toWorld(trolleyBody, handlePointLocal);
+            const mode = document.getElementById('val_mode').value;
+
+            if (mode === 'auto' || isAutoTesting) {
+                const speedErr = targetSpeedCmS - actualSpeedCmS;
+                const forceMag = Math.max(0, Math.min(1, speedErr * 0.1)) * maxForceKgf * kgfToMatter * simDir;
+                Body.applyForce(trolleyBody, hWorld, { x: forceMag * cosS, y: forceMag * sinS });
+                currentForceKgf = Math.abs(forceMag / kgfToMatter);
+            } else if (isDraggingHandle && !isMeasureMode) {
+                const force = Vector.mult(Vector.sub(mouseWorld, hWorld), 0.0001);
+                Body.applyForce(trolleyBody, hWorld, force);
+                currentForceKgf = Vector.magnitude(force) / kgfToMatter;
+            }
+
+            // 判定
+            const isPassed = simDir === 1 ? trolleyBody.position.x > finishLineX : trolleyBody.position.x < finishLineX;
+            if (isPassed || trolleyBody.position.y > failLineY || Math.abs(trolleyBody.angle - slopeRad) > 1.5) {
+                simActive = false;
+                if (isAutoTesting) setTimeout(runNextAutoTest, 500);
+            }
+        });
+
+        Events.on(render, 'afterRender', () => {
+            const ctx = render.context;
+            ctx.save();
+            ctx.translate(-render.bounds.min.x, -render.bounds.min.y);
+            
+            // 繪製捲尺
+            measurements.concat(isMeasuring?[{start:currentMeasureStart, end:currentMeasureEnd}]:[]).forEach(m => {
+                ctx.beginPath(); ctx.moveTo(m.start.x, m.start.y); ctx.lineTo(m.end.x, m.end.y);
+                ctx.strokeStyle = '#9b59b6'; ctx.setLineDash([5,5]); ctx.stroke();
+                const dist = (Math.hypot(m.end.x-m.start.x, m.end.y-m.start.y)/simScale).toFixed(1);
+                ctx.fillStyle = '#f1c40f'; ctx.fillText(dist+"cm", (m.start.x+m.end.x)/2, (m.start.y+m.end.y)/2);
+            });
+
+            // 達標線
+            ctx.beginPath(); ctx.moveTo(finishLineX, 0); ctx.lineTo(finishLineX, 2000);
+            ctx.strokeStyle = '#2ecc71'; ctx.setLineDash([10,5]); ctx.stroke();
+            
+            ctx.restore();
+
+            // 儀表板
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(10,10,180,80);
+            ctx.fillStyle = '#fff'; ctx.font = '14px Arial';
+            ctx.fillText(`坡度: ${slopeDeg}°`, 20, 30);
+            ctx.fillText(`速度: ${actualSpeedCmS.toFixed(1)} cm/s`, 20, 50);
+            ctx.fillText(`推力: ${currentForceKgf.toFixed(1)} kgf`, 20, 70);
+        });
+
+        Events.on(render, 'beforeRender', () => {
+            Render.lookAt(render, { 
+                min: { x: trolleyBody.position.x - 400, y: trolleyBody.position.y - 300 }, 
+                max: { x: trolleyBody.position.x + 400, y: trolleyBody.position.y + 300 } 
+            });
+        });
+
+        Render.run(render); runner = Runner.create(); Runner.run(runner, engine);
+    }
+
+    btnSim.addEventListener('click', initSimulation);
+    btnResetPos.addEventListener('click', initSimulation);
+    
+    btnAutoTest.addEventListener('click', () => {
+        const forces = document.getElementById('auto_forces').value.split(',').map(n => parseFloat(n.trim()));
+        testQueue = forces.map(f => ({ force: f }));
+        isAutoTesting = true;
+        resultsLog.style.display = 'flex';
+        runNextAutoTest();
+    });
+
+    function runNextAutoTest() {
+        if (!isAutoTesting || testQueue.length === 0) { isAutoTesting = false; return; }
+        currentTestConfig = testQueue.shift();
+        initSimulation();
+    }
+</script>
+</body>
+</html>
