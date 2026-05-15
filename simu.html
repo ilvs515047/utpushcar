@@ -74,20 +74,6 @@
                 <input type="number" id="val_floor_friction" value="0.3" step="0.1" min="0" max="2">
             </div>
         </div>
-
-        <div style="display: flex; gap: 10px;">
-            <div class="input-group" style="flex:1;">
-                <label>🏔️ 地面傾斜角度 (°)</label>
-                <input type="number" id="val_ground_angle" value="0" step="0.5" min="-30" max="30">
-            </div>
-        </div>
-
-
-
-
-
-
-        
         
         <div style="display: flex; gap: 10px;">
             <div class="input-group" style="flex:1;">
@@ -435,8 +421,6 @@
         let mode = isAutoTesting ? 'auto' : document.getElementById('val_mode').value;
 
         engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
-        engine.gravity.x = Math.sin(groundAngleRad);
-        engine.gravity.y = Math.cos(groundAngleRad);
         render = Render.create({ 
             element: workspace, engine: engine, 
             options: { width: workspace.clientWidth, height: workspace.clientHeight, wireframes: false, background: '#ecf0f1', hasBounds: true } 
@@ -457,14 +441,13 @@
             frictionStatic: floorFriction * 2.5, 
             slop: 0.01, chamfer: { radius: 2 } 
         };
-        const groundAngleDeg = parseFloat(document.getElementById('val_ground_angle').value) || 0;
-        const groundAngleRad = groundAngleDeg * Math.PI / 180;
         const groundLength = 50000;
-        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, groundOpts);
-        const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, groundOpts);
-        Body.setAngle(g1, groundAngleRad);
-        Body.setAngle(g2, groundAngleRad);
+        const slope1 = -0.05; // 左段坡度（弧度）
+        const slope2 = 0.05;  // 右段坡度（弧度）
+        const g1 = Bodies.rectangle(gapStartX - groundLength/2, floorY + 25, groundLength, 50, { ...groundOpts, angle: slope1 });
+        const g2 = Bodies.rectangle(gapStartX + gapPx + groundLength/2, floorY + 25, groundLength, 50, { ...groundOpts, angle: slope2 });
 
+        
         const carGroup = Body.nextGroup(true);
         let rigidParts = [];
         let handleConfig = null;
